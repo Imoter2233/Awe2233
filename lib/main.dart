@@ -18,7 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ----------------------------------------------------------------------------
 // 1. CONSTANTS & KEYS
 // ----------------------------------------------------------------------------
-const String csvUrl = "https://raw.githubusercontent.com/Imoter2233/synapse_asset/main/data.csv";
+const String csvUrl = "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
 const String cacheKey = "synapse_offline_cache";
 const String themeKey = "synapse_theme_mode";
 const String firstRunKey = "synapse_first_run";
