@@ -15,7 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:csv/csv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path_provider/path_provider.dart'; // Handles large offline caches
+import 'package:path_provider/path_provider.dart'; 
 
 // ----------------------------------------------------------------------------
 // 1. CONSTANTS & KEYS
@@ -25,18 +25,15 @@ const String themeKey = "synapse_theme_mode";
 const String firstRunKey = "synapse_first_run";
 const String cacheFileName = "synapse_offline_db.json";
 
-// Native channel to communicate with Kotlin for FLAG_SECURE
 const MethodChannel platformChannel = MethodChannel('com.synapse.app/secure');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Set transparent status bar
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent, 
   ));
 
-  // Trigger Native FLAG_SECURE to block screenshots on Android
   try {
     if (!kIsWeb && Platform.isAndroid) {
       await platformChannel.invokeMethod('enableSecureFlag');
@@ -105,21 +102,22 @@ class QuestionModel {
 }
 
 // ----------------------------------------------------------------------------
-// 3. BACKGROUND ISOLATE PARSERS (For 100k+ speeds)
+// 3. BACKGROUND ISOLATE PARSERS 
 // ----------------------------------------------------------------------------
 
-// Decodes raw CSV Text into objects in the background
 List<QuestionModel> _decodeCsvInBackground(String csvText) {
   List<QuestionModel> newDB =[];
   try {
-    // Strip invisible BOM characters and carriage returns that break parsing
-    String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '').replaceAll('\r', '');
+    // 1. Strip invisible BOM characters
+    String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '');
     
-    // Auto-detect line endings
-    List<List<dynamic>> rows = const CsvToListConverter().convert(cleanCsv, shouldParseNumbers: false);
+    // 2. THE FIX: Standardize all line endings to strictly \n (Python behavior)
+    cleanCsv = cleanCsv.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    
+    // 3. Force converter to look for \n so it splits rows properly
+    List<List<dynamic>> rows = const CsvToListConverter(eol: '\n').convert(cleanCsv, shouldParseNumbers: false);
     
     if (rows.isNotEmpty) {
-      // Lowercase all headers to avoid case sensitivity issues
       List<String> headers = rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
       
       for (int r = 1; r < rows.length; r++) {
@@ -129,7 +127,6 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
           if (c < row.length) dict[headers[c]] = row[c].toString().trim();
         }
 
-        // Must have an ID to be valid
         if (!dict.containsKey('id') || dict['id']!.isEmpty) continue;
         String qId = dict['id']!;
         List<RootItem> roots =[];
@@ -137,7 +134,6 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
         for (int i = 1; i <= 5; i++) {
           String text = dict['r${i}_text'] ?? "";
           if (text.isNotEmpty) {
-            // Support for both `r1_ans` and `r1ans` headers
             String rawAns = (dict['r${i}_ans'] ?? dict['r${i}ans'] ?? "").trim().toUpperCase();
             String ans = rawAns.isNotEmpty ? rawAns.substring(0, 1) : "";
             String info = dict['r${i}_info'] ?? "";
@@ -146,7 +142,7 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
         }
         
         newDB.add(QuestionModel(
-          id: qId, subject: dict['subject'] ?? "", topic: dict['topic'] ?? "", 
+          id: qId, subject: dict['subject'] ?? "", topic: dict['topic'] ?? "Uncategorized", 
           year: dict['year'] ?? "", stem: dict['stem'] ?? "", roots: roots,
         ));
       }
@@ -157,7 +153,6 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
   return newDB;
 }
 
-// Background decoder for JSON cache (prevents UI freeze on app start)
 List<QuestionModel> _decodeJsonCacheInBackground(String jsonStr) {
   try {
     List<dynamic> parsed = jsonDecode(jsonStr);
@@ -167,7 +162,6 @@ List<QuestionModel> _decodeJsonCacheInBackground(String jsonStr) {
   }
 }
 
-// Background encoder for JSON cache 
 String _encodeJsonCacheInBackground(List<QuestionModel> data) {
   return jsonEncode(data.map((e) => e.toJson()).toList());
 }
@@ -179,6 +173,9 @@ class AppState extends ChangeNotifier {
   bool isDarkMode = true;
   bool isFirstRun = true;
   bool isLoading = true;
+
+  // Error tracking to prevent blind debugging
+  String errorMessage = ""; 
 
   List<QuestionModel> fullDB = [];
   List<QuestionModel> filteredDB =[];
@@ -210,10 +207,7 @@ class AppState extends ChangeNotifier {
     isDarkMode = prefs.getBool(themeKey) ?? true;
     isFirstRun = prefs.getBool(firstRunKey) ?? true;
 
-    // Load instantly from device disk if available
     await _loadLocalFileCache();
-    
-    // Fetch background updates to keep app fresh without blocking UI
     _fetchFromServer();
   }
 
@@ -225,11 +219,10 @@ class AppState extends ChangeNotifier {
       if (await file.exists()) {
         String jsonStr = await file.readAsString();
         if (jsonStr.isNotEmpty) {
-          // Offload decoding to isolate so main thread isn't blocked
           fullDB = await compute(_decodeJsonCacheInBackground, jsonStr);
           _setupData();
           isLoading = false;
-          notifyListeners(); // Render UI immediately from cache!
+          notifyListeners();
         }
       }
     } catch (e) {
@@ -239,29 +232,30 @@ class AppState extends ChangeNotifier {
 
   Future<void> _fetchFromServer() async {
     try {
-      // Timeout extended to 30s to allow large files to download
       final response = await http.get(Uri.parse(csvUrl)).timeout(const Duration(seconds: 30));
+      
       if (response.statusCode == 200) {
-        
-        // Parse CSV in Isolate
         List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
         
         if (parsed.isNotEmpty) {
-          // Check if data actually changed (basic length check for speed)
+          errorMessage = ""; // Clear errors
           if (parsed.length != fullDB.length || fullDB.isEmpty) {
             fullDB = parsed;
             _setupData();
             
-            // Save to local file in background so next startup is fast
             final directory = await getApplicationDocumentsDirectory();
             final file = File('${directory.path}/$cacheFileName');
             String newCacheStr = await compute(_encodeJsonCacheInBackground, fullDB);
             await file.writeAsString(newCacheStr, flush: true);
           }
+        } else {
+          errorMessage = "CSV fetched but 0 questions parsed. Check column headers.";
         }
+      } else {
+        errorMessage = "Network Error ${response.statusCode}: Failed to fetch GitHub CSV.";
       }
     } catch (e) {
-      debugPrint("Network fetch error (Offline mode active): $e");
+      if (fullDB.isEmpty) errorMessage = "Connection failed. Please check internet.";
     } finally {
       isLoading = false;
       notifyListeners();
@@ -283,7 +277,6 @@ class AppState extends ChangeNotifier {
   }
 
   void _setupData() {
-    // O(N) optimized unique topic mapping (Extremely fast for 100k)
     Set<String> uniqueTopics = {};
     for (var q in fullDB) {
       if (q.topic.isNotEmpty) uniqueTopics.add(q.topic);
@@ -301,7 +294,6 @@ class AppState extends ChangeNotifier {
       return topicMatch && searchMatch;
     }).toList();
     
-    // Ensure we don't end up on an empty page out of bounds
     currentPage = 1;
     notifyListeners();
   }
@@ -600,14 +592,12 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   
-  // ScrollController for dynamic pagination scrolling
   final ScrollController _pageScrollController = ScrollController();
 
   void _changePage(int newPage) {
     widget.app.setPage(newPage);
-    // Smoothly scroll the pagination row to the selected number
     if (_pageScrollController.hasClients) {
-      double offset = (newPage - 1) * 44.0; // 36 width + 8 horizontal margin
+      double offset = (newPage - 1) * 44.0; 
       _pageScrollController.animateTo(
         offset,
         duration: const Duration(milliseconds: 300),
@@ -714,7 +704,19 @@ class _MainScreenState extends State<MainScreen> {
               ),
             Expanded(
               child: app.filteredDB.isEmpty
-                  ? const Center(child: Text("No questions match your criteria."))
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20.0),
+                        child: Text(
+                          app.errorMessage.isNotEmpty ? app.errorMessage : "No questions match your criteria.",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: app.errorMessage.isNotEmpty ? Colors.redAccent : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                            fontSize: 16
+                          ),
+                        ),
+                      ),
+                    )
                   : ListView.builder(
                       physics: const BouncingScrollPhysics(),
                       padding: const EdgeInsets.all(15),
@@ -746,7 +748,7 @@ class _MainScreenState extends State<MainScreen> {
                     IconButton(icon: const Icon(Icons.chevron_left), onPressed: app.currentPage > 1 ? () => _changePage(app.currentPage - 1) : null),
                     Expanded(
                       child: ListView.builder(
-                        controller: _pageScrollController, // Linked ScrollController
+                        controller: _pageScrollController, 
                         scrollDirection: Axis.horizontal,
                         itemCount: app.totalPages,
                         itemBuilder: (context, index) {
