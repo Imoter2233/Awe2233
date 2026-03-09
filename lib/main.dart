@@ -1,7 +1,7 @@
 // ============================================================================
 // FILE: main.dart
 // PROJECT: SYNAPSE - MEDICAL PAST QUESTIONS (FLUTTER EDITION)
-// UPGRADE: UI Enhanced (Neumorphic Submit, Premium Drawer, Bug Fixes)
+// UPGRADE: Year Dropdowns, Detailed Topic Drill-downs, Premium UI
 // ============================================================================
 
 import 'dart:async';
@@ -20,26 +20,20 @@ import 'package:path_provider/path_provider.dart';
 // ----------------------------------------------------------------------------
 // 1. CONSTANTS & KEYS
 // ----------------------------------------------------------------------------
-// URL pointing to the raw CSV database on GitHub
 const String csvUrl = "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
-// Keys used for saving user preferences locally
 const String themeKey = "synapse_theme_mode";
 const String firstRunKey = "synapse_first_run";
 const String cacheFileName = "synapse_offline_db.json";
 
-// Native channel to communicate with Kotlin for blocking screenshots
 const MethodChannel platformChannel = MethodChannel('com.synapse.app/secure');
 
 void main() async {
-  // Ensures Flutter engine is fully booted before running native code
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Makes the top phone status bar transparent for a modern look
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent, 
   ));
 
-  // Tries to trigger the Kotlin code to prevent screenshots (Android only)
   try {
     if (!kIsWeb && Platform.isAndroid) {
       await platformChannel.invokeMethod('enableSecureFlag');
@@ -48,12 +42,11 @@ void main() async {
     debugPrint("Failed to secure screen: $e");
   }
 
-  // Starts the actual App
   runApp(const SynapseApp());
 }
 
 // ----------------------------------------------------------------------------
-// 2. DATA MODELS (Logic for converting JSON to Dart Objects)
+// 2. DATA MODELS 
 // ----------------------------------------------------------------------------
 class RootItem {
   final String id;
@@ -61,13 +54,9 @@ class RootItem {
   final String answer;
   final String info;
 
-  // Constructor requires all fields
   RootItem({required this.id, required this.text, required this.answer, required this.info});
 
-  // Converts the object back into a Map for saving to device cache
   Map<String, dynamic> toJson() => {'id': id, 'text': text, 'answer': answer, 'info': info};
-  
-  // Converts Map from device cache back into a Dart Object
   factory RootItem.fromJson(Map<String, dynamic> json) => RootItem(
         id: json['id'] ?? '',
         text: json['text'] ?? '',
@@ -84,7 +73,6 @@ class QuestionModel {
   final String stem;
   final List<RootItem> roots;
 
-  // Constructor
   QuestionModel({
     required this.id,
     required this.subject,
@@ -94,7 +82,6 @@ class QuestionModel {
     required this.roots,
   });
 
-  // Converts question and its sub-roots to JSON map for offline caching
   Map<String, dynamic> toJson() => {
         'id': id,
         'subject': subject,
@@ -104,7 +91,6 @@ class QuestionModel {
         'roots': roots.map((r) => r.toJson()).toList(),
       };
 
-  // Rebuilds the Question object from offline cache JSON
   factory QuestionModel.fromJson(Map<String, dynamic> json) => QuestionModel(
         id: json['id'] ?? '',
         subject: json['subject'] ?? '',
@@ -116,44 +102,34 @@ class QuestionModel {
 }
 
 // ----------------------------------------------------------------------------
-// 3. BACKGROUND ISOLATE PARSERS (Runs on separate CPU thread to prevent lag)
+// 3. BACKGROUND ISOLATE PARSERS 
 // ----------------------------------------------------------------------------
 
 List<QuestionModel> _decodeCsvInBackground(String csvText) {
   List<QuestionModel> newDB =[];
   try {
-    // 1. Strip invisible BOM characters added by Excel/Google Sheets
     String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '');
-    
-    // 2. Standardize all line endings to strictly \n (Python DictReader behavior)
     cleanCsv = cleanCsv.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
     
-    // 3. Force converter to look for \n so it splits rows perfectly
     List<List<dynamic>> rows = const CsvToListConverter(eol: '\n').convert(cleanCsv, shouldParseNumbers: false);
     
     if (rows.isNotEmpty) {
-      // Lowercase all headers to prevent case sensitivity crashes
       List<String> headers = rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
       
-      // Loop through every single row starting from row 1 (skipping headers)
       for (int r = 1; r < rows.length; r++) {
         var row = rows[r];
         Map<String, String> dict = {};
-        // Map data to corresponding headers
         for (int c = 0; c < headers.length; c++) {
           if (c < row.length) dict[headers[c]] = row[c].toString().trim();
         }
 
-        // Skip rows that have no ID
         if (!dict.containsKey('id') || dict['id']!.isEmpty) continue;
         String qId = dict['id']!;
         List<RootItem> roots =[];
         
-        // Loop through the 5 possible roots per question
         for (int i = 1; i <= 5; i++) {
           String text = dict['r${i}_text'] ?? "";
           if (text.isNotEmpty) {
-            // Check both naming conventions for answers (with or without underscore)
             String rawAns = (dict['r${i}_ans'] ?? dict['r${i}ans'] ?? "").trim().toUpperCase();
             String ans = rawAns.isNotEmpty ? rawAns.substring(0, 1) : "";
             String info = dict['r${i}_info'] ?? "";
@@ -161,7 +137,6 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
           }
         }
         
-        // Add assembled question to the database list
         newDB.add(QuestionModel(
           id: qId, subject: dict['subject'] ?? "", topic: dict['topic'] ?? "Uncategorized", 
           year: dict['year'] ?? "", stem: dict['stem'] ?? "", roots: roots,
@@ -171,10 +146,9 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
   } catch (e) {
     debugPrint("Background Parse Error: $e");
   }
-  return newDB; // Returns completed database to the main thread
+  return newDB;
 }
 
-// Decodes the local device JSON file back into Dart objects
 List<QuestionModel> _decodeJsonCacheInBackground(String jsonStr) {
   try {
     List<dynamic> parsed = jsonDecode(jsonStr);
@@ -184,19 +158,18 @@ List<QuestionModel> _decodeJsonCacheInBackground(String jsonStr) {
   }
 }
 
-// Encodes Dart objects into a JSON string to save to device storage
 String _encodeJsonCacheInBackground(List<QuestionModel> data) {
   return jsonEncode(data.map((e) => e.toJson()).toList());
 }
 
 // ----------------------------------------------------------------------------
-// 4. APP STATE MANAGEMENT (Central Brain of the App)
+// 4. APP STATE MANAGEMENT 
 // ----------------------------------------------------------------------------
 class AppState extends ChangeNotifier {
   bool isDarkMode = true;
   bool isFirstRun = true;
   bool isLoading = true;
-  String errorMessage = ""; // Holds errors to display on UI if CSV fails
+  String errorMessage = "";
 
   List<QuestionModel> fullDB =[];
   List<QuestionModel> filteredDB =[];
@@ -205,45 +178,36 @@ class AppState extends ChangeNotifier {
   List<String> activeTopics =[];
   List<String> allTopics =[];
   
-  // Pagination variables
+  // NEW: Map to track specifically selected years per topic. Null means "All".
+  Map<String, String?> activeTopicYears = {}; 
+  
   int currentPage = 1;
   int itemsPerPage = 5; 
   int get totalPages => (filteredDB.length / itemsPerPage).ceil();
 
-  // Exam state variables
   bool isExamMode = false;
   Map<String, String> userAnswers = {};
   Map<String, bool> studyRevealed = {}; 
   Map<String, bool> explanationRevealed = {};
 
-  // Timer & Scoring variables
   Timer? _timer;
   int timeLeftSeconds = 0;
   int finalScore = 0;
   Map<String, Map<String, int>> topicPerformance = {};
 
-  // Constructor triggers data loading on app startup
   AppState() {
     initData();
   }
 
-  // Initializes everything
   Future<void> initData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    
-    // Check if user previously saved light/dark mode
     isDarkMode = prefs.getBool(themeKey) ?? true;
-    // Check if it's the very first time opening the app
     isFirstRun = prefs.getBool(firstRunKey) ?? true;
 
-    // Load instantly from device disk if cache exists
     await _loadLocalFileCache();
-    
-    // Fetch background updates silently
     _fetchFromServer();
   }
 
-  // Reads the massive JSON string from the phone's file system
   Future<void> _loadLocalFileCache() async {
     try {
       final directory = await getApplicationDocumentsDirectory();
@@ -252,11 +216,10 @@ class AppState extends ChangeNotifier {
       if (await file.exists()) {
         String jsonStr = await file.readAsString();
         if (jsonStr.isNotEmpty) {
-          // Offloads parsing to background thread
           fullDB = await compute(_decodeJsonCacheInBackground, jsonStr);
           _setupData();
           isLoading = false;
-          notifyListeners(); // Refresh UI instantly
+          notifyListeners();
         }
       }
     } catch (e) {
@@ -264,25 +227,16 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Downloads the latest CSV from GitHub
   Future<void> _fetchFromServer() async {
     try {
-      // 30 seconds timeout to allow slow internet
       final response = await http.get(Uri.parse(csvUrl)).timeout(const Duration(seconds: 30));
-      
       if (response.statusCode == 200) {
-        // Parse CSV in background thread
         List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
-        
         if (parsed.isNotEmpty) {
-          errorMessage = ""; // Clear any previous errors
-          
-          // Only rewrite memory if data length changed or memory is empty
+          errorMessage = ""; 
           if (parsed.length != fullDB.length || fullDB.isEmpty) {
             fullDB = parsed;
             _setupData();
-            
-            // Overwrite the local file cache with new data
             final directory = await getApplicationDocumentsDirectory();
             final file = File('${directory.path}/$cacheFileName');
             String newCacheStr = await compute(_encodeJsonCacheInBackground, fullDB);
@@ -295,15 +249,13 @@ class AppState extends ChangeNotifier {
         errorMessage = "Network Error ${response.statusCode}: Failed to fetch GitHub CSV.";
       }
     } catch (e) {
-      // Show connection error only if we have NO offline data at all
       if (fullDB.isEmpty) errorMessage = "Connection failed. Please check internet.";
     } finally {
       isLoading = false;
-      notifyListeners(); // Tell app to rebuild UI
+      notifyListeners();
     }
   }
 
-  // Finishes the onboarding tutorial screen
   void completeOnboarding() async {
     isFirstRun = false;
     notifyListeners();
@@ -311,7 +263,6 @@ class AppState extends ChangeNotifier {
     await prefs.setBool(firstRunKey, false);
   }
 
-  // Switches between Light and Dark mode
   void toggleTheme() async {
     isDarkMode = !isDarkMode;
     notifyListeners();
@@ -319,7 +270,6 @@ class AppState extends ChangeNotifier {
     await prefs.setBool(themeKey, isDarkMode);
   }
 
-  // Extracts all unique topics from database quickly
   void _setupData() {
     Set<String> uniqueTopics = {};
     for (var q in fullDB) {
@@ -329,34 +279,52 @@ class AppState extends ChangeNotifier {
     applyFilters();
   }
 
-  // Triggers the search logic and topic filtering
+  // ENHANCED FILTER: Now respects Year dropdown selections
   void applyFilters() {
     filteredDB = fullDB.where((q) {
-      bool topicMatch = activeTopics.isEmpty || activeTopics.contains(q.topic);
       bool searchMatch = searchText.isEmpty || 
           q.stem.toLowerCase().contains(searchText.toLowerCase()) || 
           q.topic.toLowerCase().contains(searchText.toLowerCase());
+          
+      bool topicMatch = true;
+      if (activeTopics.isNotEmpty) {
+        if (!activeTopics.contains(q.topic)) {
+          topicMatch = false; // It's not one of our selected topics
+        } else {
+          // If it is our selected topic, check if a year constraint is applied
+          String? enforcedYear = activeTopicYears[q.topic];
+          if (enforcedYear != null && enforcedYear != "All" && q.year != enforcedYear) {
+            topicMatch = false; // Wrong year
+          }
+        }
+      }
       return topicMatch && searchMatch;
     }).toList();
     
-    // Always reset to page 1 when searching/filtering
     currentPage = 1;
     notifyListeners();
   }
 
-  // Applies filters chosen from the popup dialog
   void applyFiltersWith(List<String> tempFilters) {
     activeTopics = List.from(tempFilters);
+    // Cleanup any year filters for topics that were removed
+    activeTopicYears.removeWhere((key, value) => !activeTopics.contains(key));
     applyFilters();
   }
 
-  // Removes a single filter from the chip bar
+  // Clears a topic and its associated year filter
   void removeFilter(String topic) {
     activeTopics.remove(topic);
+    activeTopicYears.remove(topic);
     applyFilters();
   }
 
-  // Changes pagination page
+  // Apply a specific year filter to a topic
+  void setYearForTopic(String topic, String? year) {
+    activeTopicYears[topic] = year;
+    applyFilters();
+  }
+
   void setPage(int page) {
     if (page >= 1 && page <= totalPages) {
       currentPage = page;
@@ -364,55 +332,47 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Boots up Exam Mode and starts timer
   void startExam(int minutes) {
     isExamMode = true;
-    userAnswers.clear(); // Clear old answers
+    userAnswers.clear();
     timeLeftSeconds = minutes * 60;
     currentPage = 1;
     applyFilters(); 
     
-    // Starts the countdown ticker
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (timeLeftSeconds > 0) {
         timeLeftSeconds--;
         notifyListeners();
       } else {
-        submitExam(); // Auto submit if time reaches 0
+        submitExam();
       }
     });
     notifyListeners();
   }
 
-  // Stops timer and calculates final grades
   void submitExam() {
     _timer?.cancel();
     int correct = 0, total = 0;
-    topicPerformance = {}; // Reset topic grades
+    topicPerformance = {};
 
-    // Loop over every question in current filter
     for (var q in filteredDB) {
       if (!topicPerformance.containsKey(q.topic)) {
         topicPerformance[q.topic] = {'total': 0, 'correct': 0};
       }
-      // Check each option inside the question
       for (var r in q.roots) {
         total++;
         topicPerformance[q.topic]!['total'] = (topicPerformance[q.topic]!['total'] ?? 0) + 1;
-        // Compare user's answer with actual database answer
         if (userAnswers[r.id] == r.answer) {
           correct++;
           topicPerformance[q.topic]!['correct'] = (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
         }
       }
     }
-    // Calculate percentage
     finalScore = total > 0 ? ((correct / total) * 100).toInt() : 0;
     notifyListeners();
   }
 
-  // Exits exam mode entirely
   void exitExamMode() {
     _timer?.cancel();
     isExamMode = false;
@@ -421,13 +381,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Handles logic for clicking the True/False/Study dots
   void handleDotClick(String rootId, String actualAns) {
     if (!isExamMode) {
-      // In Study Mode: Reveal actual answer
       studyRevealed[rootId] = !(studyRevealed[rootId] ?? false);
     } else {
-      // In Exam Mode: Cycle through blank -> T -> F -> blank
       String current = userAnswers[rootId] ?? "";
       if (current == "") {
         userAnswers[rootId] = "T";
@@ -440,14 +397,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Shows/hides the extra explanation text
   void toggleExplanation(String rootId) {
-    if (isExamMode) return; // Prevent cheating in exam
+    // We actually DO want to allow explanation reveals in the detailed Review Drill-down
+    // So we don't return early here anymore. The UI logic handles hiding the button in exams.
     explanationRevealed[rootId] = !(explanationRevealed[rootId] ?? false);
     notifyListeners();
   }
 
-  // Checks if any dot in a question is revealed
   bool isQuestionRevealed(String qId) {
     var q = filteredDB.firstWhere((q) => q.id == qId);
     for (var r in q.roots) {
@@ -456,7 +412,6 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
-  // "SHOW ALL ANSWERS" button logic
   void toggleAllAnswersForQuestion(String questionId) {
     bool currentlyRevealed = isQuestionRevealed(questionId);
     var question = filteredDB.firstWhere((q) => q.id == questionId);
@@ -468,7 +423,7 @@ class AppState extends ChangeNotifier {
 }
 
 // ----------------------------------------------------------------------------
-// 5. MAIN APP WIDGET (Entry Point)
+// 5. MAIN APP WIDGET 
 // ----------------------------------------------------------------------------
 class SynapseApp extends StatefulWidget {
   const SynapseApp({super.key});
@@ -482,7 +437,6 @@ class _SynapseAppState extends State<SynapseApp> {
   @override
   void initState() {
     super.initState();
-    // Tells the UI to update whenever AppState changes
     state.addListener(() => setState(() {}));
   }
 
@@ -492,7 +446,6 @@ class _SynapseAppState extends State<SynapseApp> {
     super.dispose();
   }
 
-  // Generates Light/Dark theme dynamically
   ThemeData _buildTheme(bool isDark) {
     return ThemeData(
       useMaterial3: true,
@@ -500,16 +453,16 @@ class _SynapseAppState extends State<SynapseApp> {
       scaffoldBackgroundColor: isDark ? const Color(0xFF000000) : const Color(0xFFF3F4F6),
       colorScheme: isDark 
         ? const ColorScheme.dark(
-            primary: Color(0xFFF59E0B), // Accent Amber
-            surface: Color(0xFF111827), // Card Dark
-            onSurface: Color(0xFFF9FAFB), // Text Light
-            outline: Color(0xFF1F2937), // Border Dark
+            primary: Color(0xFFF59E0B), 
+            surface: Color(0xFF111827), 
+            onSurface: Color(0xFFF9FAFB), 
+            outline: Color(0xFF1F2937), 
           )
         : const ColorScheme.light(
-            primary: Color(0xFF3B82F6), // Accent Blue
-            surface: Color(0xFFFFFFFF), // Card White
-            onSurface: Color(0xFF111827), // Text Dark
-            outline: Color(0xFFE5E7EB), // Border Light
+            primary: Color(0xFF3B82F6), 
+            surface: Color(0xFFFFFFFF), 
+            onSurface: Color(0xFF111827), 
+            outline: Color(0xFFE5E7EB), 
           ),
       fontFamily: 'Roboto',
     );
@@ -555,7 +508,6 @@ class SplashLoaderScreen extends StatelessWidget {
   }
 }
 
-// Custom animated 3-dot bouncing loader
 class BouncingDots extends StatefulWidget {
   final Color color;
   const BouncingDots({super.key, required this.color});
@@ -583,7 +535,7 @@ class _BouncingDotsState extends State<BouncingDots> with SingleTickerProviderSt
         double offset = 0;
         double phase = (_controller.value - delay) % 1.0;
         if (phase < 0) phase += 1.0;
-        if (phase < 0.5) offset = -math.sin(phase * 2 * math.pi) * 15; // Bounce math
+        if (phase < 0.5) offset = -math.sin(phase * 2 * math.pi) * 15;
         
         return Transform.translate(
           offset: Offset(0, offset),
@@ -645,7 +597,7 @@ class OnboardingScreen extends StatelessWidget {
 }
 
 // ----------------------------------------------------------------------------
-// 7. MAIN FEED SCREEN (The Hub of the App)
+// 7. MAIN FEED SCREEN
 // ----------------------------------------------------------------------------
 class MainScreen extends StatefulWidget {
   final AppState app;
@@ -656,21 +608,92 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  
-  // Controller to smoothly animate pagination row horizontally
   final ScrollController _pageScrollController = ScrollController();
 
-  // Animates pagination scroller to center on active page number
   void _changePage(int newPage) {
     widget.app.setPage(newPage);
     if (_pageScrollController.hasClients) {
-      double offset = (newPage - 1) * 44.0; // Math to locate exact button position
+      double offset = (newPage - 1) * 44.0; 
       _pageScrollController.animateTo(
         offset,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
       );
     }
+  }
+
+  // --- NEW: GORGEOUS YEAR DROPDOWN BOTTOM SHEET ---
+  void _showYearSelectorBottomSheet(BuildContext context, AppState app, String topic) {
+    // Extract available years specifically for this topic
+    List<String> availableYears = app.fullDB
+        .where((q) => q.topic == topic && q.year.isNotEmpty)
+        .map((q) => q.year)
+        .toSet()
+        .toList()
+        ..sort((a, b) => b.compareTo(a)); // Sort newest to oldest
+        
+    String? currentSelectedYear = app.activeTopicYears[topic];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children:[
+              // Premium drag handle
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                height: 5, width: 40,
+                decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(10)),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text("Filter Year for $topic", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  physics: const BouncingScrollPhysics(),
+                  children:[
+                    // The "All Years" option
+                    ListTile(
+                      leading: Icon(Icons.calendar_today, color: currentSelectedYear == null || currentSelectedYear == "All" ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+                      title: Text("All Years", style: TextStyle(fontWeight: currentSelectedYear == null || currentSelectedYear == "All" ? FontWeight.bold : FontWeight.normal)),
+                      trailing: currentSelectedYear == null || currentSelectedYear == "All" ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : null,
+                      onTap: () {
+                        app.setYearForTopic(topic, "All");
+                        Navigator.pop(ctx);
+                      },
+                    ),
+                    const Divider(height: 1),
+                    // Loop through available years
+                    ...availableYears.map((year) {
+                      bool isSelected = currentSelectedYear == year;
+                      return ListTile(
+                        leading: Icon(Icons.history, color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+                        title: Text(year, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                        trailing: isSelected ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : null,
+                        onTap: () {
+                          app.setYearForTopic(topic, year);
+                          Navigator.pop(ctx);
+                        },
+                      );
+                    }),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      }
+    );
   }
 
   @override
@@ -682,7 +705,6 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
-    // Calculate which questions to show based on current page
     int startIdx = (app.currentPage - 1) * app.itemsPerPage;
     int endIdx = math.min(startIdx + app.itemsPerPage, app.filteredDB.length);
     List<QuestionModel> pageItems = app.filteredDB.isEmpty ?[] : app.filteredDB.sublist(startIdx, endIdx);
@@ -693,7 +715,6 @@ class _MainScreenState extends State<MainScreen> {
       body: SafeArea(
         child: Column(
           children:[
-            // TOP NAVIGATION & SEARCH AREA
             Container(
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
@@ -705,9 +726,7 @@ class _MainScreenState extends State<MainScreen> {
                     padding: const EdgeInsets.only(left: 5, right: 10, top: 10, bottom: 5),
                     child: Row(
                       children:[
-                        // Menu Button
                         IconButton(icon: const Icon(Icons.menu), onPressed: () => _scaffoldKey.currentState?.openDrawer()),
-                        // App Logo Text
                         RichText(
                           text: TextSpan(
                             text: "SYNAPSE",
@@ -717,22 +736,18 @@ class _MainScreenState extends State<MainScreen> {
                         ),
                         const Spacer(),
 
-                        // --- NEW NEUMORPHIC SUBMIT BUTTON ---
                         if (app.isExamMode)
                           Container(
                             margin: const EdgeInsets.only(right: 15),
                             decoration: BoxDecoration(
-                              // Matches background for 3D extrusion effect
                               color: Theme.of(context).colorScheme.surface, 
                               borderRadius: BorderRadius.circular(20), 
                               boxShadow:[
-                                // Darker shadow on bottom-right
                                 BoxShadow(
                                   color: app.isDarkMode ? Colors.black87 : Colors.grey.shade300, 
                                   offset: const Offset(3, 3),
                                   blurRadius: 6,
                                 ),
-                                // Lighter shadow on top-left
                                 BoxShadow(
                                   color: app.isDarkMode ? Colors.grey.shade800 : Colors.white, 
                                   offset: const Offset(-3, -3),
@@ -741,7 +756,7 @@ class _MainScreenState extends State<MainScreen> {
                               ],
                             ),
                             child: Material(
-                              color: Colors.transparent, // Prevents inkwell from hiding shadows
+                              color: Colors.transparent, 
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(20),
                                 onTap: () {
@@ -764,17 +779,14 @@ class _MainScreenState extends State<MainScreen> {
                             ),
                           ),
                         
-                        // Countdown Timer
                         if (app.isExamMode)
                           Text(_formatTime(app.timeLeftSeconds), style: const TextStyle(color: Color(0xFFEF4444), fontSize: 20, fontWeight: FontWeight.bold)),
                         
-                        // Filter Icon
                         IconButton(icon: const Icon(Icons.tune), onPressed: () => _showFilterDialog(context, app)),
                       ],
                     ),
                   ),
                   
-                  // Search Bar
                   Padding(
                     padding: const EdgeInsets.fromLTRB(15, 10, 15, 15),
                     child: SizedBox(
@@ -801,7 +813,7 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
             
-            // FILTER CHIPS ROW (Shows currently selected topics)
+            // FILTER CHIPS ROW - NOW INTERACTIVE FOR YEAR SELECTION
             if (app.activeTopics.isNotEmpty)
               Container(
                 height: 50,
@@ -810,33 +822,62 @@ class _MainScreenState extends State<MainScreen> {
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
                   padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                  children: app.activeTopics.map((t) => Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.only(left: 12, right: 5),
-                    decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(15)),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children:[
-                        Text(t, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                        const SizedBox(width: 4),
-                        GestureDetector(
-                          onTap: () => app.removeFilter(t),
-                          child: Icon(Icons.close, size: 16, color: app.isDarkMode ? Colors.black : Colors.white),
-                        )
-                      ],
-                    )
-                  )).toList(),
+                  children: app.activeTopics.map((t) {
+                    String selectedYear = app.activeTopicYears[t] ?? "All";
+                    bool isYearFiltered = selectedYear != "All";
+                    
+                    return Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(15)),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(15),
+                          onTap: () => _showYearSelectorBottomSheet(context, app, t), // Triggers Dropdown Sheet
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 12, right: 5),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children:[
+                                // Main topic text
+                                Text(t, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                                
+                                // Specific Year indicator
+                                if (isYearFiltered)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 4),
+                                    child: Text("($selectedYear)", style: TextStyle(color: app.isDarkMode ? Colors.black54 : Colors.white70, fontWeight: FontWeight.w900, fontSize: 11)),
+                                  ),
+                                
+                                // Tiny Dropdown Arrow
+                                Icon(Icons.arrow_drop_down, size: 18, color: app.isDarkMode ? Colors.black54 : Colors.white70),
+                                
+                                const SizedBox(width: 4),
+                                // Close X Button (Removes topic entirely)
+                                GestureDetector(
+                                  onTap: () => app.removeFilter(t),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: BoxDecoration(color: app.isDarkMode ? Colors.black12 : Colors.white24, shape: BoxShape.circle),
+                                    child: Icon(Icons.close, size: 14, color: app.isDarkMode ? Colors.black : Colors.white)
+                                  ),
+                                )
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 ),
               ),
             
-            // MAIN FEED (The list of questions)
             Expanded(
               child: app.filteredDB.isEmpty
                   ? Center(
                       child: Padding(
                         padding: const EdgeInsets.all(20.0),
                         child: Text(
-                          // Shows specific error if parsing failed, else normal empty text
                           app.errorMessage.isNotEmpty ? app.errorMessage : "No questions match your criteria.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
@@ -854,17 +895,13 @@ class _MainScreenState extends State<MainScreen> {
                     ),
             ),
             
-            // PAGINATION BAR (Always visible if multiple pages exist)
             if (app.totalPages > 1)
               Container(
                 height: 60,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
                   children:[
-                    // Left Arrow Button
                     IconButton(icon: const Icon(Icons.chevron_left), onPressed: app.currentPage > 1 ? () => _changePage(app.currentPage - 1) : null),
-                    
-                    // Scrolling Numbers
                     Expanded(
                       child: ListView.builder(
                         controller: _pageScrollController, 
@@ -892,8 +929,6 @@ class _MainScreenState extends State<MainScreen> {
                         }
                       )
                     ),
-                    
-                    // Right Arrow Button
                     IconButton(icon: const Icon(Icons.chevron_right), onPressed: app.currentPage < app.totalPages ? () => _changePage(app.currentPage + 1) : null),
                   ],
                 ),
@@ -904,21 +939,18 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // Helper to format 90 seconds into "01:30"
   String _formatTime(int seconds) {
     int m = seconds ~/ 60;
     int s = seconds % 60;
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
-  // --- PREMIUM DRAWER REDESIGN ---
   Widget _buildDrawer(AppState app, BuildContext context) {
     return Drawer(
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.horizontal(right: Radius.circular(20))),
       child: Column(
         children:[
-          // Mature Premium Gradient Header
           Container(
             padding: const EdgeInsets.only(top: 55, left: 24, bottom: 24, right: 24),
             decoration: BoxDecoration(
@@ -935,7 +967,6 @@ class _MainScreenState extends State<MainScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children:[
-                // Circular elevated logo
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -946,7 +977,6 @@ class _MainScreenState extends State<MainScreen> {
                   child: Icon(Icons.psychology, size: 40, color: Theme.of(context).colorScheme.primary),
                 ),
                 const SizedBox(height: 16),
-                // Stylized Title
                 RichText(
                   text: TextSpan(
                     text: "SYNAPSE", 
@@ -954,7 +984,6 @@ class _MainScreenState extends State<MainScreen> {
                     children:[TextSpan(text: ".", style: TextStyle(color: Theme.of(context).colorScheme.primary))]
                   )
                 ),
-                // Subtitle
                 Text(
                   "Premium Medical Study", 
                   style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 12, letterSpacing: 0.5)
@@ -965,7 +994,6 @@ class _MainScreenState extends State<MainScreen> {
           
           const SizedBox(height: 10),
           
-          // Floating Menu Items
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -986,8 +1014,8 @@ class _MainScreenState extends State<MainScreen> {
                   context, 
                   icon: Icons.library_books_rounded, 
                   title: "Study Materials", 
-                  subtitle: "Coming Soon", // Non-functional yet
-                  onTap: () { /* Future expansion slot */ }
+                  subtitle: "Coming Soon", 
+                  onTap: () { }
                 ),
                 const Divider(height: 30),
                 _buildDrawerItem(
@@ -1004,20 +1032,17 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // Helper widget to generate cool floating menu buttons
   Widget _buildDrawerItem(BuildContext context, {required IconData icon, required String title, String? subtitle, required VoidCallback onTap}) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), // Rounded corners for tiles
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), 
       leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-      // If subtitle provided, style it small and colored
       subtitle: subtitle != null ? Text(subtitle, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary)) : null,
       onTap: onTap,
     );
   }
 
-  // Opens popup dialog to filter specific topics
   void _showFilterDialog(BuildContext context, AppState app) {
     List<String> tempFilters = List.from(app.activeTopics);
     
@@ -1034,7 +1059,6 @@ class _MainScreenState extends State<MainScreen> {
               height: 450,
               child: Column(
                 children:[
-                  // Topic List
                   Expanded(
                     child: ListView.builder(
                       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1051,27 +1075,25 @@ class _MainScreenState extends State<MainScreen> {
                     )
                   ),
                   
-                  // Bottom Dialog Action Buttons
                   Container(
                     height: 60,
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     child: Row(
                       children:[
-                        // --- FILTER RESET FIX ---
                         Expanded(
                           child: TextButton(
                             style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3), foregroundColor: Theme.of(context).colorScheme.onSurface),
                             onPressed: () {
-                              setState(() => tempFilters.clear()); // Clears local dialog state
-                              app.applyFiltersWith(tempFilters); // Instantly wipes global state chips & resets feed
-                              Navigator.pop(ctx); // Automatically closes dialog to show clean feed
+                              setState(() => tempFilters.clear()); 
+                              app.activeTopicYears.clear(); // Reset all years
+                              app.applyFiltersWith(tempFilters); 
+                              Navigator.pop(ctx); 
                             },
                             child: const Text("RESET", style: TextStyle(fontWeight: FontWeight.bold))
                           )
                         ),
                         const SizedBox(width: 10),
                         
-                        // Apply Filters Button
                         Expanded(
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: app.isDarkMode ? Colors.black : Colors.white),
@@ -1094,7 +1116,6 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // Custom 3D wheel spinner for Exam Time selection
   void _showExamTimeDialog(BuildContext context, AppState app) {
     int selectedHour = 0;
     int selectedMin = 10;
@@ -1110,7 +1131,6 @@ class _MainScreenState extends State<MainScreen> {
               height: 200,
               child: Row(
                 children:[
-                  // Hours Spinner
                   Expanded(
                     child: Column(
                       children:[
@@ -1128,8 +1148,6 @@ class _MainScreenState extends State<MainScreen> {
                       ],
                     ),
                   ),
-                  
-                  // Minutes Spinner
                   Expanded(
                     child: Column(
                       children:[
@@ -1157,7 +1175,7 @@ class _MainScreenState extends State<MainScreen> {
               TextButton(
                 onPressed: () {
                   int totalMins = selectedHour * 60 + selectedMin;
-                  if (totalMins == 0) totalMins = 10; // Failsafe to minimum 10 mins
+                  if (totalMins == 0) totalMins = 10; 
                   app.startExam(totalMins);
                   Navigator.pop(ctx);
                 },
@@ -1172,7 +1190,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ----------------------------------------------------------------------------
-// 8. QUESTION CARD AND ROOT WIDGETS (Renders individual questions)
+// 8. QUESTION CARD AND ROOT WIDGETS 
 // ----------------------------------------------------------------------------
 class QuestionCard extends StatelessWidget {
   final QuestionModel q;
@@ -1187,22 +1205,15 @@ class QuestionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children:[
-          // Badges for Topic and Year
           Row(children:[
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(6)), child: Text(q.topic, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(6)), child: Text(q.year, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold))),
           ]),
           const SizedBox(height: 15),
-          
-          // Main Question Stem
           Text(q.stem, style: const TextStyle(fontSize: 17, height: 1.4, fontWeight: FontWeight.bold)),
           const SizedBox(height: 15),
-          
-          // Loads all 5 options/roots
           ...q.roots.map((r) => _RootWidget(r: r, app: app)),
-          
-          // "SHOW ALL ANSWERS" button (only visible in Study Mode)
           if (!app.isExamMode) ...[
             const SizedBox(height: 15),
             GestureDetector(
@@ -1220,7 +1231,6 @@ class QuestionCard extends StatelessWidget {
   }
 }
 
-// Individual Option/Root Widget
 class _RootWidget extends StatelessWidget {
   final RootItem r;
   final AppState app;
@@ -1232,13 +1242,11 @@ class _RootWidget extends StatelessWidget {
     String userAns = app.userAnswers[r.id] ?? "";
     bool showExp = app.explanationRevealed[r.id] ?? false;
 
-    // Default empty state for the dot
     Color dotBg = Colors.transparent;
     Color dotBorder = Theme.of(context).colorScheme.outline;
     Color dotTextColor = Theme.of(context).colorScheme.onSurface;
     String dotText = "•";
 
-    // Modifies dot color/text based on Exam Mode input or Study Mode reveals
     if (app.isExamMode) {
       if (userAns == "T" || userAns == "F") {
         dotText = userAns;
@@ -1261,7 +1269,6 @@ class _RootWidget extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children:[
-              // The interactive True/False dot button
               GestureDetector(
                 onTap: () => app.handleDotClick(r.id, r.answer),
                 child: AnimatedContainer(
@@ -1271,14 +1278,10 @@ class _RootWidget extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 15),
-              
-              // Text for the option (Clicking text reveals explanation in study mode)
               Expanded(child: GestureDetector(onTap: () => app.toggleExplanation(r.id), child: Text(r.text, style: const TextStyle(fontSize: 15, height: 1.3)))),
             ],
           ),
         ),
-        
-        // Animated dropdown section for explanations
         AnimatedSize(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutQuad,
@@ -1295,17 +1298,15 @@ class _RootWidget extends StatelessWidget {
 }
 
 // ----------------------------------------------------------------------------
-// 9. RESULT & REVIEW SCREENS (Post-Exam Evaluation)
+// 9. RESULT, REVIEW & DETAILED DRILL-DOWN SCREENS
 // ----------------------------------------------------------------------------
-
-// High-level overview of final score
 class ResultScreen extends StatelessWidget {
   final AppState app;
   const ResultScreen({super.key, required this.app});
 
   @override
   Widget build(BuildContext context) {
-    bool passed = app.finalScore >= 70; // Pass mark is 70%
+    bool passed = app.finalScore >= 70; 
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -1313,8 +1314,6 @@ class ResultScreen extends StatelessWidget {
           child: Column(
             children:[
               const SizedBox(height: 50, child: Text("CLINICAL EVALUATION", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
-              
-              // Animated Circular Score Diagram
               SizedBox(
                 height: 220,
                 child: Stack(
@@ -1330,7 +1329,7 @@ class ResultScreen extends StatelessWidget {
                           child: CircularProgressIndicator(
                             value: value, strokeWidth: 14, 
                             backgroundColor: Theme.of(context).colorScheme.outline, 
-                            color: passed ? const Color(0xFF10B981) : const Color(0xFFEF4444) // Green if passed, Red if failed
+                            color: passed ? const Color(0xFF10B981) : const Color(0xFFEF4444) 
                           )
                         );
                       }
@@ -1339,16 +1338,12 @@ class ResultScreen extends StatelessWidget {
                   ]
                 ),
               ),
-              
-              // Advice card
               Container(
                 height: 70, width: double.infinity, alignment: Alignment.centerLeft, padding: const EdgeInsets.all(15),
                 decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12)),
                 child: Text(passed ? "BOARD READINESS: High." : "REMEDIATION: Required.", style: const TextStyle(fontWeight: FontWeight.bold))
               ),
               const Spacer(),
-              
-              // Navigates to deep breakdown per topic
               SizedBox(
                 width: double.infinity, height: 55,
                 child: ElevatedButton(
@@ -1358,8 +1353,6 @@ class ResultScreen extends StatelessWidget {
                 )
               ),
               const SizedBox(height: 20),
-              
-              // Exits back to home screen
               SizedBox(
                 width: double.infinity, height: 55,
                 child: ElevatedButton(
@@ -1376,7 +1369,6 @@ class ResultScreen extends StatelessWidget {
   }
 }
 
-// Detailed breakdown of performance per individual topic
 class ReviewScreen extends StatelessWidget {
   final AppState app;
   const ReviewScreen({super.key, required this.app});
@@ -1399,29 +1391,38 @@ class ReviewScreen extends StatelessWidget {
             ),
             Expanded(
               child: ListView.separated(
+                physics: const BouncingScrollPhysics(),
                 padding: const EdgeInsets.all(20),
                 itemCount: topics.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 15),
                 itemBuilder: (ctx, i) {
-                  // Math to figure out topic grades
                   String topic = topics[i].key;
                   int total = topics[i].value['total']!;
                   int correct = topics[i].value['correct']!;
                   int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
                   
-                  // Color codes: Green (>=80%), Amber (>=50%), Red (<50%)
                   Color color = pct >= 80 ? const Color(0xFF10B981) : (pct >= 50 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
                   IconData icon = pct >= 80 ? Icons.check_circle : (pct >= 50 ? Icons.error : Icons.cancel);
 
-                  return Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
-                    child: Row(children:[
-                      Icon(icon, color: color, size: 28),
-                      const SizedBox(width: 15),
-                      Expanded(child: Text(topic, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
-                      Text("$pct%", style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
-                    ]),
+                  // NEW: Wrap in InkWell to route to Detailed Screen
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DetailedReviewScreen(app: app, topic: topic))),
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
+                        child: Row(children:[
+                          Icon(icon, color: color, size: 28),
+                          const SizedBox(width: 15),
+                          Expanded(child: Text(topic, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+                          Text("$pct%", style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 10),
+                          Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)), // Drill-down hint
+                        ]),
+                      ),
+                    ),
                   );
                 },
               ),
@@ -1429,6 +1430,201 @@ class ReviewScreen extends StatelessWidget {
           ],
         ),
       )
+    );
+  }
+}
+
+// --- NEW: DETAILED REVIEW DRILL-DOWN SCREEN ---
+class DetailedReviewScreen extends StatelessWidget {
+  final AppState app;
+  final String topic;
+  const DetailedReviewScreen({super.key, required this.app, required this.topic});
+
+  @override
+  Widget build(BuildContext context) {
+    // Filter questions that were in the exam AND belong to this specific topic
+    List<QuestionModel> topicQuestions = app.filteredDB.where((q) => q.topic == topic).toList();
+
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children:[
+            // Header
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outline))),
+              child: Row(
+                children:[
+                  IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+                  Expanded(
+                    child: Text(topic, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+              )
+            ),
+            
+            // List of locked, graded question cards
+            Expanded(
+              child: ListView.builder(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.all(15),
+                itemCount: topicQuestions.length,
+                itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: _ReviewQuestionCard(q: topicQuestions[i], app: app)),
+              ),
+            ),
+          ],
+        ),
+      )
+    );
+  }
+}
+
+// Special locked-down card that visually grades options
+class _ReviewQuestionCard extends StatelessWidget {
+  final QuestionModel q;
+  final AppState app;
+  const _ReviewQuestionCard({required this.q, required this.app});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children:[
+          // Badges
+          Row(children:[
+            Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(6)), child: Text(q.topic, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+            const SizedBox(width: 8),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(6)), child: Text(q.year, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold))),
+          ]),
+          const SizedBox(height: 15),
+          
+          Text(q.stem, style: const TextStyle(fontSize: 17, height: 1.4, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 15),
+          
+          // Loads graded roots
+          ...q.roots.map((r) => _ReviewRootWidget(r: r, app: app)),
+        ],
+      ),
+    );
+  }
+}
+
+// Special graded root option widget
+class _ReviewRootWidget extends StatelessWidget {
+  final RootItem r;
+  final AppState app;
+  const _ReviewRootWidget({required this.r, required this.app});
+
+  @override
+  Widget build(BuildContext context) {
+    String userAns = app.userAnswers[r.id] ?? "";
+    String actualAns = r.answer;
+    bool showExp = app.explanationRevealed[r.id] ?? false;
+
+    // Visual Grades Math
+    bool isCorrect = userAns == actualAns;
+    bool isUnanswered = userAns == "";
+
+    // Colors
+    Color dotBg = Colors.transparent;
+    Color dotBorder = Theme.of(context).colorScheme.outline;
+    Color dotTextColor = Theme.of(context).colorScheme.onSurface;
+    String dotText = actualAns; // Always show correct answer inside dot for learning
+    
+    // Status Badge setup
+    Color badgeColor = Colors.transparent;
+    Color badgeTextColor = Colors.white;
+    String badgeText = "";
+    IconData? badgeIcon;
+
+    if (isUnanswered) {
+      // Skipped / Unanswered
+      dotBorder = Colors.grey; 
+      dotTextColor = Colors.grey;
+      badgeColor = Colors.grey.shade600;
+      badgeText = "UNANSWERED";
+      badgeIcon = Icons.remove;
+    } else if (isCorrect) {
+      // Correct
+      dotBg = const Color(0xFF10B981); // Green
+      dotBorder = dotBg;
+      dotTextColor = Colors.white;
+      badgeColor = const Color(0xFF10B981).withValues(alpha: 0.2);
+      badgeTextColor = const Color(0xFF10B981);
+      badgeText = "CORRECT";
+      badgeIcon = Icons.check;
+    } else {
+      // Wrong
+      dotBg = const Color(0xFFEF4444); // Red
+      dotBorder = dotBg;
+      dotTextColor = Colors.white;
+      badgeColor = const Color(0xFFEF4444).withValues(alpha: 0.2);
+      badgeTextColor = const Color(0xFFEF4444);
+      badgeText = "YOU CHOSE: $userAns";
+      badgeIcon = Icons.close;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children:[
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children:[
+              // Non-clickable dot showing the CORRECT answer
+              Container(
+                width: 34, height: 34, alignment: Alignment.center, 
+                decoration: BoxDecoration(color: dotBg, shape: BoxShape.circle, border: Border.all(color: dotBorder, width: 1.5)), 
+                child: Text(dotText, style: TextStyle(fontWeight: FontWeight.bold, color: dotTextColor, fontSize: 14))
+              ),
+              const SizedBox(width: 15),
+              
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children:[
+                    // Text
+                    GestureDetector(
+                      onTap: () => app.toggleExplanation(r.id), // Let them tap text to see explanation
+                      child: Text(r.text, style: const TextStyle(fontSize: 15, height: 1.3))
+                    ),
+                    const SizedBox(height: 6),
+                    // Feedback Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: badgeColor, borderRadius: BorderRadius.circular(4)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children:[
+                          Icon(badgeIcon, size: 12, color: badgeTextColor),
+                          const SizedBox(width: 4),
+                          Text(badgeText, style: TextStyle(color: badgeTextColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ],
+                      )
+                    )
+                  ],
+                )
+              ),
+            ],
+          ),
+        ),
+        
+        // Animated dropdown section for explanations
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutQuad,
+          child: showExp 
+            ? Container(
+                margin: const EdgeInsets.only(left: 49, bottom: 10, right: 10),
+                child: Text(r.info, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontStyle: FontStyle.italic, fontSize: 13))
+              ) 
+            : const SizedBox.shrink(),
+        ),
+      ],
     );
   }
 }
