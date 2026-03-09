@@ -6,6 +6,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'; 
@@ -14,20 +15,36 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:csv/csv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart'; // Handles large offline caches
 
 // ----------------------------------------------------------------------------
 // 1. CONSTANTS & KEYS
 // ----------------------------------------------------------------------------
 const String csvUrl = "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
-const String cacheKey = "synapse_offline_cache";
 const String themeKey = "synapse_theme_mode";
 const String firstRunKey = "synapse_first_run";
+const String cacheFileName = "synapse_offline_db.json";
 
-void main() {
+// Native channel to communicate with Kotlin for FLAG_SECURE
+const MethodChannel platformChannel = MethodChannel('com.synapse.app/secure');
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Set transparent status bar
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent, 
   ));
+
+  // Trigger Native FLAG_SECURE to block screenshots on Android
+  try {
+    if (!kIsWeb && Platform.isAndroid) {
+      await platformChannel.invokeMethod('enableSecureFlag');
+    }
+  } catch (e) {
+    debugPrint("Failed to secure screen: $e");
+  }
+
   runApp(const SynapseApp());
 }
 
@@ -44,10 +61,10 @@ class RootItem {
 
   Map<String, dynamic> toJson() => {'id': id, 'text': text, 'answer': answer, 'info': info};
   factory RootItem.fromJson(Map<String, dynamic> json) => RootItem(
-        id: json['id'],
-        text: json['text'],
-        answer: json['answer'],
-        info: json['info'],
+        id: json['id'] ?? '',
+        text: json['text'] ?? '',
+        answer: json['answer'] ?? '',
+        info: json['info'] ?? '',
       );
 }
 
@@ -78,31 +95,41 @@ class QuestionModel {
       };
 
   factory QuestionModel.fromJson(Map<String, dynamic> json) => QuestionModel(
-        id: json['id'],
-        subject: json['subject'],
-        topic: json['topic'],
-        year: json['year'],
-        stem: json['stem'],
-        roots: (json['roots'] as List).map((r) => RootItem.fromJson(r)).toList(),
+        id: json['id'] ?? '',
+        subject: json['subject'] ?? '',
+        topic: json['topic'] ?? '',
+        year: json['year'] ?? '',
+        stem: json['stem'] ?? '',
+        roots: (json['roots'] as List?)?.map((r) => RootItem.fromJson(r)).toList() ??[],
       );
 }
 
 // ----------------------------------------------------------------------------
-// 3. BACKGROUND ISOLATE PARSER
+// 3. BACKGROUND ISOLATE PARSERS (For 100k+ speeds)
 // ----------------------------------------------------------------------------
+
+// Decodes raw CSV Text into objects in the background
 List<QuestionModel> _decodeCsvInBackground(String csvText) {
   List<QuestionModel> newDB =[];
   try {
-    List<List<dynamic>> rows = const CsvToListConverter().convert(csvText, eol: '\n', shouldParseNumbers: false);
+    // Strip invisible BOM characters and carriage returns that break parsing
+    String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '').replaceAll('\r', '');
+    
+    // Auto-detect line endings
+    List<List<dynamic>> rows = const CsvToListConverter().convert(cleanCsv, shouldParseNumbers: false);
+    
     if (rows.isNotEmpty) {
-      List<String> headers = rows[0].map((e) => e.toString().trim()).toList();
+      // Lowercase all headers to avoid case sensitivity issues
+      List<String> headers = rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
+      
       for (int r = 1; r < rows.length; r++) {
         var row = rows[r];
         Map<String, String> dict = {};
         for (int c = 0; c < headers.length; c++) {
-          if (c < row.length) dict[headers[c]] = row[c].toString();
+          if (c < row.length) dict[headers[c]] = row[c].toString().trim();
         }
 
+        // Must have an ID to be valid
         if (!dict.containsKey('id') || dict['id']!.isEmpty) continue;
         String qId = dict['id']!;
         List<RootItem> roots =[];
@@ -110,12 +137,14 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
         for (int i = 1; i <= 5; i++) {
           String text = dict['r${i}_text'] ?? "";
           if (text.isNotEmpty) {
-            String rawAns = (dict['r${i}ans'] ?? "").trim().toUpperCase();
+            // Support for both `r1_ans` and `r1ans` headers
+            String rawAns = (dict['r${i}_ans'] ?? dict['r${i}ans'] ?? "").trim().toUpperCase();
             String ans = rawAns.isNotEmpty ? rawAns.substring(0, 1) : "";
             String info = dict['r${i}_info'] ?? "";
             roots.add(RootItem(id: "${qId}_$i", text: text, answer: ans, info: info));
           }
         }
+        
         newDB.add(QuestionModel(
           id: qId, subject: dict['subject'] ?? "", topic: dict['topic'] ?? "", 
           year: dict['year'] ?? "", stem: dict['stem'] ?? "", roots: roots,
@@ -128,6 +157,21 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
   return newDB;
 }
 
+// Background decoder for JSON cache (prevents UI freeze on app start)
+List<QuestionModel> _decodeJsonCacheInBackground(String jsonStr) {
+  try {
+    List<dynamic> parsed = jsonDecode(jsonStr);
+    return parsed.map((e) => QuestionModel.fromJson(e)).toList();
+  } catch (e) {
+    return[];
+  }
+}
+
+// Background encoder for JSON cache 
+String _encodeJsonCacheInBackground(List<QuestionModel> data) {
+  return jsonEncode(data.map((e) => e.toJson()).toList());
+}
+
 // ----------------------------------------------------------------------------
 // 4. APP STATE MANAGEMENT
 // ----------------------------------------------------------------------------
@@ -136,14 +180,14 @@ class AppState extends ChangeNotifier {
   bool isFirstRun = true;
   bool isLoading = true;
 
-  List<QuestionModel> fullDB =[];
+  List<QuestionModel> fullDB = [];
   List<QuestionModel> filteredDB =[];
   
   String searchText = "";
   List<String> activeTopics = [];
   List<String> allTopics =[];
   int currentPage = 1;
-  int itemsPerPage = 5;
+  int itemsPerPage = 5; 
   int get totalPages => (filteredDB.length / itemsPerPage).ceil();
 
   bool isExamMode = false;
@@ -166,36 +210,58 @@ class AppState extends ChangeNotifier {
     isDarkMode = prefs.getBool(themeKey) ?? true;
     isFirstRun = prefs.getBool(firstRunKey) ?? true;
 
-    String? cachedData = prefs.getString(cacheKey);
-    if (cachedData != null) {
-      try {
-        List<dynamic> jsonList = jsonDecode(cachedData);
-        fullDB = jsonList.map((e) => QuestionModel.fromJson(e)).toList();
-        _setupData();
-        isLoading = false;
-        notifyListeners();
-      } catch (e) {
-        debugPrint("Cache parsing error: $e");
-      }
-    }
-
-    _fetchFromServer(prefs);
+    // Load instantly from device disk if available
+    await _loadLocalFileCache();
+    
+    // Fetch background updates to keep app fresh without blocking UI
+    _fetchFromServer();
   }
 
-  Future<void> _fetchFromServer(SharedPreferences prefs) async {
+  Future<void> _loadLocalFileCache() async {
     try {
-      final response = await http.get(Uri.parse(csvUrl)).timeout(const Duration(seconds: 15));
-      if (response.statusCode == 200) {
-        List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
-        if (parsed.isNotEmpty) {
-          fullDB = parsed;
-          String jsonToCache = jsonEncode(fullDB.map((e) => e.toJson()).toList());
-          await prefs.setString(cacheKey, jsonToCache);
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/$cacheFileName');
+      
+      if (await file.exists()) {
+        String jsonStr = await file.readAsString();
+        if (jsonStr.isNotEmpty) {
+          // Offload decoding to isolate so main thread isn't blocked
+          fullDB = await compute(_decodeJsonCacheInBackground, jsonStr);
           _setupData();
+          isLoading = false;
+          notifyListeners(); // Render UI immediately from cache!
         }
       }
     } catch (e) {
-      debugPrint("Network error: $e");
+      debugPrint("File Cache Read Error: $e");
+    }
+  }
+
+  Future<void> _fetchFromServer() async {
+    try {
+      // Timeout extended to 30s to allow large files to download
+      final response = await http.get(Uri.parse(csvUrl)).timeout(const Duration(seconds: 30));
+      if (response.statusCode == 200) {
+        
+        // Parse CSV in Isolate
+        List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
+        
+        if (parsed.isNotEmpty) {
+          // Check if data actually changed (basic length check for speed)
+          if (parsed.length != fullDB.length || fullDB.isEmpty) {
+            fullDB = parsed;
+            _setupData();
+            
+            // Save to local file in background so next startup is fast
+            final directory = await getApplicationDocumentsDirectory();
+            final file = File('${directory.path}/$cacheFileName');
+            String newCacheStr = await compute(_encodeJsonCacheInBackground, fullDB);
+            await file.writeAsString(newCacheStr, flush: true);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Network fetch error (Offline mode active): $e");
     } finally {
       isLoading = false;
       notifyListeners();
@@ -217,7 +283,12 @@ class AppState extends ChangeNotifier {
   }
 
   void _setupData() {
-    allTopics = fullDB.map((e) => e.topic).where((t) => t.isNotEmpty).toSet().toList()..sort();
+    // O(N) optimized unique topic mapping (Extremely fast for 100k)
+    Set<String> uniqueTopics = {};
+    for (var q in fullDB) {
+      if (q.topic.isNotEmpty) uniqueTopics.add(q.topic);
+    }
+    allTopics = uniqueTopics.toList()..sort();
     applyFilters();
   }
 
@@ -229,6 +300,8 @@ class AppState extends ChangeNotifier {
           q.topic.toLowerCase().contains(searchText.toLowerCase());
       return topicMatch && searchMatch;
     }).toList();
+    
+    // Ensure we don't end up on an empty page out of bounds
     currentPage = 1;
     notifyListeners();
   }
@@ -526,6 +599,28 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  
+  // ScrollController for dynamic pagination scrolling
+  final ScrollController _pageScrollController = ScrollController();
+
+  void _changePage(int newPage) {
+    widget.app.setPage(newPage);
+    // Smoothly scroll the pagination row to the selected number
+    if (_pageScrollController.hasClients) {
+      double offset = (newPage - 1) * 44.0; // 36 width + 8 horizontal margin
+      _pageScrollController.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -648,16 +743,17 @@ class _MainScreenState extends State<MainScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
                   children:[
-                    IconButton(icon: const Icon(Icons.chevron_left), onPressed: app.currentPage > 1 ? () => app.setPage(app.currentPage - 1) : null),
+                    IconButton(icon: const Icon(Icons.chevron_left), onPressed: app.currentPage > 1 ? () => _changePage(app.currentPage - 1) : null),
                     Expanded(
                       child: ListView.builder(
+                        controller: _pageScrollController, // Linked ScrollController
                         scrollDirection: Axis.horizontal,
                         itemCount: app.totalPages,
                         itemBuilder: (context, index) {
                           int page = index + 1;
                           bool isActive = page == app.currentPage;
                           return GestureDetector(
-                            onTap: () => app.setPage(page),
+                            onTap: () => _changePage(page),
                             child: Container(
                               margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
                               width: 36,
@@ -675,7 +771,7 @@ class _MainScreenState extends State<MainScreen> {
                         }
                       )
                     ),
-                    IconButton(icon: const Icon(Icons.chevron_right), onPressed: app.currentPage < app.totalPages ? () => app.setPage(app.currentPage + 1) : null),
+                    IconButton(icon: const Icon(Icons.chevron_right), onPressed: app.currentPage < app.totalPages ? () => _changePage(app.currentPage + 1) : null),
                   ],
                 ),
               ),
@@ -817,7 +913,7 @@ class _MainScreenState extends State<MainScreen> {
             content: SizedBox(
               height: 200,
               child: Row(
-                children: [
+                children:[
                   Expanded(
                     child: Column(
                       children:[
@@ -891,7 +987,7 @@ class QuestionCard extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children:[
           Row(children:[
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(6)), child: Text(q.topic, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),
