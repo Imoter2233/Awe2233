@@ -1,7 +1,7 @@
 // ============================================================================
 // FILE: main.dart
 // PROJECT: SYNAPSE - MEDICAL PAST QUESTIONS (FLUTTER EDITION)
-// UPGRADE: Custom Themes, Multi-Year Filters, Haptic Sounds, Navigation Fixes
+// UPGRADE: Firebase Auth Ready, Device Binding, Scroll Sounds, Security
 // ============================================================================
 
 import 'dart:async';
@@ -9,31 +9,41 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart'; 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Needed for HapticFeedback and Sounds
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:csv/csv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path_provider/path_provider.dart'; 
+import 'package:path_provider/path_provider.dart';
 
 // ----------------------------------------------------------------------------
 // 1. CONSTANTS & KEYS
 // ----------------------------------------------------------------------------
 const String csvUrl = "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
 const String themeKey = "synapse_theme_mode";
-const String colorIndexKey = "synapse_color_index"; // NEW: Saves custom color
-const String soundPrefKey = "synapse_sound_pref"; // NEW: Saves sound toggle
+const String colorIndexKey = "synapse_color_index";
+const String soundPrefKey = "synapse_sound_pref";
+const String volumePrefKey = "synapse_volume_pref";
 const String firstRunKey = "synapse_first_run";
 const String cacheFileName = "synapse_offline_db.json";
+
+// Auth Keys
+const String isLoggedInKey = "synapse_is_logged_in";
+const String userTokenKey = "synapse_user_token";
+const String uniqueIdKey = "synapse_unique_id";
+const String firstNameKey = "synapse_first_name";
+const String surnameKey = "synapse_surname";
+const String emailKey = "synapse_email";
+const String welcomeSeenKey = "synapse_welcome_seen";
 
 const MethodChannel platformChannel = MethodChannel('com.synapse.app/secure');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent, 
+    statusBarColor: Colors.transparent,
   ));
 
   try {
@@ -48,7 +58,7 @@ void main() async {
 }
 
 // ----------------------------------------------------------------------------
-// 2. DATA MODELS 
+// 2. DATA MODELS
 // ----------------------------------------------------------------------------
 class RootItem {
   final String id;
@@ -104,20 +114,19 @@ class QuestionModel {
 }
 
 // ----------------------------------------------------------------------------
-// 3. BACKGROUND ISOLATE PARSERS 
+// 3. BACKGROUND ISOLATE PARSERS
 // ----------------------------------------------------------------------------
-
 List<QuestionModel> _decodeCsvInBackground(String csvText) {
   List<QuestionModel> newDB =[];
   try {
     String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '');
     cleanCsv = cleanCsv.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-    
+
     List<List<dynamic>> rows = const CsvToListConverter(eol: '\n').convert(cleanCsv, shouldParseNumbers: false);
-    
+
     if (rows.isNotEmpty) {
       List<String> headers = rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
-      
+
       for (int r = 1; r < rows.length; r++) {
         var row = rows[r];
         Map<String, String> dict = {};
@@ -128,7 +137,7 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
         if (!dict.containsKey('id') || dict['id']!.isEmpty) continue;
         String qId = dict['id']!;
         List<RootItem> roots =[];
-        
+
         for (int i = 1; i <= 5; i++) {
           String text = dict['r${i}_text'] ?? "";
           if (text.isNotEmpty) {
@@ -138,9 +147,9 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
             roots.add(RootItem(id: "${qId}_$i", text: text, answer: ans, info: info));
           }
         }
-        
+
         newDB.add(QuestionModel(
-          id: qId, subject: dict['subject'] ?? "", topic: dict['topic'] ?? "Uncategorized", 
+          id: qId, subject: dict['subject'] ?? "", topic: dict['topic'] ?? "Uncategorized",
           year: dict['year'] ?? "", stem: dict['stem'] ?? "", roots: roots,
         ));
       }
@@ -165,36 +174,46 @@ String _encodeJsonCacheInBackground(List<QuestionModel> data) {
 }
 
 // ----------------------------------------------------------------------------
-// 4. APP STATE MANAGEMENT 
+// 4. APP STATE MANAGEMENT
 // ----------------------------------------------------------------------------
 class AppState extends ChangeNotifier {
   bool isDarkMode = true;
-  int themeColorIndex = 0; // 0: Amber, 1: Teal, 2: Purple
+  int themeColorIndex = 0;
   bool isFirstRun = true;
   bool isLoading = true;
-  
-  bool soundEnabled = true; // Toggle for mechanical scroll sounds
-  double soundVolume = 1.0; // Dummy visual variable for future audio expansion
+
+  // Sound Config
+  bool soundEnabled = true;
+  double soundVolume = 0.5; // Acts as scroll sensitivity threshold in native
+  double accumulatedScroll = 0.0; // Tracks scrolling distance for ticks
+
+  // Auth & Profile Data
+  bool isLoggedIn = false;
+  String userToken = "";
+  String uniqueId = "";
+  String firstName = "";
+  String surname = "";
+  String email = "";
+  bool hasSeenWelcome = false;
 
   String errorMessage = "";
 
   List<QuestionModel> fullDB =[];
   List<QuestionModel> filteredDB =[];
-  
+
   String searchText = "";
   List<String> activeTopics =[];
   List<String> allTopics =[];
-  
-  // NEW: Multi-Year Selection (List instead of single string)
-  Map<String, List<String>> activeTopicYears = {}; 
-  
+
+  Map<String, List<String>> activeTopicYears = {};
+
   int currentPage = 1;
-  int itemsPerPage = 5; 
+  int itemsPerPage = 5;
   int get totalPages => (filteredDB.length / itemsPerPage).ceil();
 
   bool isExamMode = false;
   Map<String, String> userAnswers = {};
-  Map<String, bool> studyRevealed = {}; 
+  Map<String, bool> studyRevealed = {};
   Map<String, bool> explanationRevealed = {};
 
   Timer? _timer;
@@ -202,7 +221,6 @@ class AppState extends ChangeNotifier {
   int finalScore = 0;
   Map<String, Map<String, int>> topicPerformance = {};
 
-  // Custom Color Palettes
   final List<Color> availableColors =[
     const Color(0xFFF59E0B), // Thick Amber
     const Color(0xFF14B8A6), // Premium Teal
@@ -217,21 +235,94 @@ class AppState extends ChangeNotifier {
 
   Future<void> initData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    
+
     isDarkMode = prefs.getBool(themeKey) ?? true;
     themeColorIndex = prefs.getInt(colorIndexKey) ?? 0;
     soundEnabled = prefs.getBool(soundPrefKey) ?? true;
+    soundVolume = prefs.getDouble(volumePrefKey) ?? 0.5;
     isFirstRun = prefs.getBool(firstRunKey) ?? true;
 
+    // Load Auth Data
+    isLoggedIn = prefs.getBool(isLoggedInKey) ?? false;
+    userToken = prefs.getString(userTokenKey) ?? "";
+    uniqueId = prefs.getString(uniqueIdKey) ?? "";
+    firstName = prefs.getString(firstNameKey) ?? "";
+    surname = prefs.getString(surnameKey) ?? "";
+    email = prefs.getString(emailKey) ?? "";
+    hasSeenWelcome = prefs.getBool(welcomeSeenKey) ?? false;
+
     await _loadLocalFileCache();
-    _fetchFromServer();
+    _fetchFromServer(); // Still fetch silently
   }
 
+  // --- MOCK FIREBASE LOGIC FUNCTIONS ---
+  Future<void> registerToken(String token) async {
+    // FIREBASE ACTION HERE
+    // 1. Get Device ID using device_info_plus.
+    // 2. Check Firestore if token exists and is unused.
+    // 3. If used by another Device ID -> Throw error.
+    // 4. If valid -> Bind Device ID to token.
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    userToken = token;
+    await prefs.setString(userTokenKey, token);
+    notifyListeners();
+  }
+
+  Future<void> saveUserProfile(String fName, String sName, String mail) async {
+    // FIREBASE ACTION HERE
+    // 1. Firebase createUserWithEmailAndPassword.
+    // 2. await user.sendEmailVerification().
+    // 3. Check if verified before proceeding.
+    // 4. Update Firestore Profile, mark token as USED, add manually entered Expiry.
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    firstName = fName;
+    surname = sName;
+    email = mail;
+
+    // Generate Unique ID (First Name + 4 random alphanumerics)
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    math.Random rnd = math.Random();
+    String randomStr = String.fromCharCodes(Iterable.generate(
+        4, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
+    uniqueId = "${firstName.trim().toUpperCase()}-$randomStr";
+
+    isLoggedIn = true;
+    
+    await prefs.setString(firstNameKey, firstName);
+    await prefs.setString(surnameKey, surname);
+    await prefs.setString(emailKey, email);
+    await prefs.setString(uniqueIdKey, uniqueId);
+    await prefs.setBool(isLoggedInKey, true);
+    notifyListeners();
+  }
+
+  void markWelcomeSeen() async {
+    hasSeenWelcome = true;
+    notifyListeners();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(welcomeSeenKey, true);
+  }
+
+  void completeOnboarding() async {
+    isFirstRun = false;
+    notifyListeners();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(firstRunKey, false);
+  }
+
+  void logOut() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.clear(); // Clears everything for testing
+    isLoggedIn = false;
+    notifyListeners();
+  }
+
+  // --- CORE DATA & SETTINGS LOGIC ---
   Future<void> _loadLocalFileCache() async {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$cacheFileName');
-      
+
       if (await file.exists()) {
         String jsonStr = await file.readAsString();
         if (jsonStr.isNotEmpty) {
@@ -252,7 +343,7 @@ class AppState extends ChangeNotifier {
       if (response.statusCode == 200) {
         List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
         if (parsed.isNotEmpty) {
-          errorMessage = ""; 
+          errorMessage = "";
           if (parsed.length != fullDB.length || fullDB.isEmpty) {
             fullDB = parsed;
             _setupData();
@@ -273,13 +364,6 @@ class AppState extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
-  }
-
-  void completeOnboarding() async {
-    isFirstRun = false;
-    notifyListeners();
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(firstRunKey, false);
   }
 
   void toggleThemeMode() async {
@@ -303,11 +387,27 @@ class AppState extends ChangeNotifier {
     await prefs.setBool(soundPrefKey, soundEnabled);
   }
 
+  void setVolume(double val) async {
+    soundVolume = val;
+    notifyListeners();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(volumePrefKey, soundVolume);
+  }
+
   void playScrollSound() {
     if (soundEnabled) {
-      // Hardware level mechanical tick (Zero lag)
-      HapticFeedback.selectionClick(); 
-      SystemSound.play(SystemSoundType.click); 
+      HapticFeedback.selectionClick();
+      SystemSound.play(SystemSoundType.click);
+    }
+  }
+
+  void trackScrollTick(double delta) {
+    if (!soundEnabled) return;
+    accumulatedScroll += delta.abs();
+    double threshold = 100.0 - (soundVolume * 70.0);
+    if (accumulatedScroll > threshold) {
+      playScrollSound();
+      accumulatedScroll = 0.0;
     }
   }
 
@@ -320,30 +420,28 @@ class AppState extends ChangeNotifier {
     applyFilters();
   }
 
-  // ENHANCED FILTER: Respects MULTIPLE selected years per topic
   void applyFilters() {
     filteredDB = fullDB.where((q) {
-      bool searchMatch = searchText.isEmpty || 
-          q.stem.toLowerCase().contains(searchText.toLowerCase()) || 
+      bool searchMatch = searchText.isEmpty ||
+          q.stem.toLowerCase().contains(searchText.toLowerCase()) ||
           q.topic.toLowerCase().contains(searchText.toLowerCase());
-          
+
       bool topicMatch = true;
       if (activeTopics.isNotEmpty) {
         if (!activeTopics.contains(q.topic)) {
-          topicMatch = false; 
+          topicMatch = false;
         } else {
-          // If years are selected for this topic, ensure q.year matches one of them
           List<String>? enforcedYears = activeTopicYears[q.topic];
           if (enforcedYears != null && enforcedYears.isNotEmpty) {
             if (!enforcedYears.contains(q.year)) {
-              topicMatch = false; 
+              topicMatch = false;
             }
           }
         }
       }
       return topicMatch && searchMatch;
     }).toList();
-    
+
     currentPage = 1;
     notifyListeners();
   }
@@ -360,7 +458,6 @@ class AppState extends ChangeNotifier {
     applyFilters();
   }
 
-  // Toggles a specific year in the multi-select array
   void toggleYearForTopic(String topic, String year) {
     activeTopicYears.putIfAbsent(topic, () => []);
     if (activeTopicYears[topic]!.contains(year)) {
@@ -371,7 +468,6 @@ class AppState extends ChangeNotifier {
     applyFilters();
   }
 
-  // Resets to "All Years"
   void clearYearsForTopic(String topic) {
     activeTopicYears[topic] =[];
     applyFilters();
@@ -389,8 +485,8 @@ class AppState extends ChangeNotifier {
     userAnswers.clear();
     timeLeftSeconds = minutes * 60;
     currentPage = 1;
-    applyFilters(); 
-    
+    applyFilters();
+
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (timeLeftSeconds > 0) {
@@ -473,7 +569,7 @@ class AppState extends ChangeNotifier {
 }
 
 // ----------------------------------------------------------------------------
-// 5. MAIN APP WIDGET 
+// 5. MAIN APP WIDGET
 // ----------------------------------------------------------------------------
 class SynapseApp extends StatefulWidget {
   const SynapseApp({super.key});
@@ -501,21 +597,31 @@ class _SynapseAppState extends State<SynapseApp> {
       useMaterial3: true,
       brightness: isDark ? Brightness.dark : Brightness.light,
       scaffoldBackgroundColor: isDark ? const Color(0xFF000000) : const Color(0xFFF3F4F6),
-      colorScheme: isDark 
-        ? ColorScheme.dark(
-            primary: primary, 
-            surface: const Color(0xFF111827), 
-            onSurface: const Color(0xFFF9FAFB), 
-            outline: const Color(0xFF1F2937), 
-          )
-        : ColorScheme.light(
-            primary: primary, 
-            surface: const Color(0xFFFFFFFF), 
-            onSurface: const Color(0xFF111827), 
-            outline: const Color(0xFFE5E7EB), 
-          ),
+      colorScheme: isDark
+          ? ColorScheme.dark(
+              primary: primary,
+              surface: const Color(0xFF111827),
+              onSurface: const Color(0xFFF9FAFB),
+              outline: const Color(0xFF1F2937),
+            )
+          : ColorScheme.light(
+              primary: primary,
+              surface: const Color(0xFFFFFFFF),
+              onSurface: const Color(0xFF111827),
+              outline: const Color(0xFFE5E7EB),
+            ),
       fontFamily: 'Roboto',
     );
+  }
+
+  Widget _determineStartScreen() {
+    if (state.isLoading) return const SplashLoaderScreen();
+    if (!state.isLoggedIn) {
+      if (state.userToken.isEmpty) return TokenScreen(app: state);
+      return RegistrationScreen(app: state);
+    }
+    if (state.isFirstRun) return OnboardingScreen(app: state);
+    return MainScreen(app: state);
   }
 
   @override
@@ -523,16 +629,196 @@ class _SynapseAppState extends State<SynapseApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(state.isDarkMode, state.currentPrimaryColor),
-      home: state.isLoading 
-          ? const SplashLoaderScreen() 
-          : (state.isFirstRun ? OnboardingScreen(app: state) : MainScreen(app: state)),
+      home: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 500),
+        child: _determineStartScreen(),
+      ),
     );
   }
 }
 
 // ----------------------------------------------------------------------------
-// 6. SPLASH SCREEN & ONBOARDING
+// 6. AUTHENTICATION & ONBOARDING SCREENS
 // ----------------------------------------------------------------------------
+
+class TokenScreen extends StatefulWidget {
+  final AppState app;
+  const TokenScreen({super.key, required this.app});
+  @override
+  State<TokenScreen> createState() => _TokenScreenState();
+}
+
+class _TokenScreenState extends State<TokenScreen> {
+  final TextEditingController _tokenController = TextEditingController();
+  bool _isLoading = false;
+  String? _errorMsg;
+
+  void _verifyToken() async {
+    String token = _tokenController.text.trim().toUpperCase();
+    if (token.length != 17 || !RegExp(r'^[A-Z0-9]+$').hasMatch(token)) {
+      setState(() => _errorMsg = "Invalid format. Must be 17 alphanumeric characters.");
+      return;
+    }
+    setState(() { _isLoading = true; _errorMsg = null; });
+    
+    // MOCK FIREBASE DELAY
+    await Future.delayed(const Duration(seconds: 2));
+    
+    // In actual implementation, check if Token is available on Firebase here
+    await widget.app.registerToken(token);
+    
+    setState(() => _isLoading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(30),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children:[
+                Icon(Icons.lock_outline, size: 80, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(height: 20),
+                Text("Device Verification", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
+                const SizedBox(height: 10),
+                Text("Enter your 17-digit security token to bind this device.", textAlign: TextAlign.center, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
+                const SizedBox(height: 40),
+                
+                TextField(
+                  controller: _tokenController,
+                  maxLength: 17,
+                  textCapitalization: TextCapitalization.characters,
+                  inputFormatters:[FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]'))],
+                  style: const TextStyle(fontSize: 20, letterSpacing: 2, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                  decoration: InputDecoration(
+                    counterText: "",
+                    hintText: "XXXX-XXXX-XXXX-XXXX",
+                    hintStyle: TextStyle(letterSpacing: 0, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)),
+                    filled: true,
+                    fillColor: Theme.of(context).colorScheme.surface,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2)),
+                    errorText: _errorMsg,
+                  ),
+                ),
+                
+                const SizedBox(height: 30),
+                SizedBox(
+                  width: double.infinity, height: 55,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: _isLoading ? null : _verifyToken,
+                    child: _isLoading 
+                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : Text("VERIFY & BIND", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: widget.app.isDarkMode ? Colors.black : Colors.white)),
+                  ),
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class RegistrationScreen extends StatefulWidget {
+  final AppState app;
+  const RegistrationScreen({super.key, required this.app});
+  @override
+  State<RegistrationScreen> createState() => _RegistrationScreenState();
+}
+
+class _RegistrationScreenState extends State<RegistrationScreen> {
+  final TextEditingController _surController = TextEditingController();
+  final TextEditingController _firstController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  bool _isLoading = false;
+
+  void _submitProfile() async {
+    if (_surController.text.isEmpty || _firstController.text.isEmpty || !_emailController.text.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields correctly.")));
+      return;
+    }
+    setState(() => _isLoading = true);
+    
+    // MOCK FIREBASE DELAY for email check
+    await Future.delayed(const Duration(seconds: 2));
+    
+    await widget.app.saveUserProfile(_firstController.text.trim(), _surController.text.trim(), _emailController.text.trim());
+    
+    // Returns logic to Main App State
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, title: const Text("Student Profile")),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(30),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children:[
+                Text("Complete Profile", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
+                const SizedBox(height: 5),
+                Text("Your verified token is bound. Set up your details.", style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
+                const SizedBox(height: 30),
+                
+                _buildField("Surname", _surController, false),
+                const SizedBox(height: 15),
+                _buildField("First Name", _firstController, false),
+                const SizedBox(height: 15),
+                _buildField("Email Address", _emailController, true),
+                
+                const SizedBox(height: 40),
+                SizedBox(
+                  width: double.infinity, height: 55,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: _isLoading ? null : _submitProfile,
+                    child: _isLoading 
+                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : Text("COMPLETE SETUP", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: widget.app.isDarkMode ? Colors.black : Colors.white)),
+                  ),
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildField(String label, TextEditingController controller, bool isEmail) {
+    return TextField(
+      controller: controller,
+      keyboardType: isEmail ? TextInputType.emailAddress : TextInputType.text,
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+        filled: true,
+        fillColor: Theme.of(context).colorScheme.surface,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2)),
+      ),
+    );
+  }
+}
+
 class SplashLoaderScreen extends StatelessWidget {
   const SplashLoaderScreen({super.key});
   @override
@@ -586,7 +872,7 @@ class _BouncingDotsState extends State<BouncingDots> with SingleTickerProviderSt
         double phase = (_controller.value - delay) % 1.0;
         if (phase < 0) phase += 1.0;
         if (phase < 0.5) offset = -math.sin(phase * 2 * math.pi) * 15;
-        
+
         return Transform.translate(
           offset: Offset(0, offset),
           child: Container(
@@ -659,11 +945,18 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final ScrollController _pageScrollController = ScrollController();
+  bool _showBanner = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _showBanner = !widget.app.hasSeenWelcome;
+  }
 
   void _changePage(int newPage) {
     widget.app.setPage(newPage);
     if (_pageScrollController.hasClients) {
-      double offset = (newPage - 1) * 44.0; 
+      double offset = (newPage - 1) * 44.0;
       _pageScrollController.animateTo(
         offset,
         duration: const Duration(milliseconds: 300),
@@ -672,20 +965,18 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // --- MULTI-YEAR SELECTOR BOTTOM SHEET ---
   void _showYearSelectorBottomSheet(BuildContext context, AppState app, String topic) {
     List<String> availableYears = app.fullDB
         .where((q) => q.topic == topic && q.year.isNotEmpty)
         .map((q) => q.year)
         .toSet()
         .toList()
-        ..sort((a, b) => b.compareTo(a)); 
+        ..sort((a, b) => b.compareTo(a));
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
-        // StatefulBuilder allows checkboxes to tick instantly without closing the modal
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
             List<String> currentSelectedYears = app.activeTopicYears[topic] ??[];
@@ -709,39 +1000,43 @@ class _MainScreenState extends State<MainScreen> {
                     child: Text("Filter Years for $topic", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   ),
                   Flexible(
-                    child: ListView(
-                      shrinkWrap: true,
-                      physics: const BouncingScrollPhysics(),
-                      children:[
-                        // "All Years" resets the array
-                        CheckboxListTile(
-                          activeColor: Theme.of(context).colorScheme.primary,
-                          checkColor: app.isDarkMode ? Colors.black : Colors.white,
-                          title: Text("All Years", style: TextStyle(fontWeight: isAllYears ? FontWeight.bold : FontWeight.normal)),
-                          value: isAllYears,
-                          onChanged: (bool? value) {
-                            if (value == true) {
-                              app.clearYearsForTopic(topic);
-                              setModalState(() {});
-                            }
-                          },
-                        ),
-                        const Divider(height: 1),
-                        // Multiple specific years
-                        ...availableYears.map((year) {
-                          bool isSelected = currentSelectedYears.contains(year);
-                          return CheckboxListTile(
-                            activeColor: Theme.of(context).colorScheme.primary,
+                    child: NotificationListener<ScrollUpdateNotification>(
+                      onNotification: (notif) {
+                        app.trackScrollTick(notif.scrollDelta ?? 0);
+                        return false;
+                      },
+                      child: ListView(
+                        shrinkWrap: true,
+                        physics: const BouncingScrollPhysics(),
+                        children:[
+                          CheckboxListTile(
+                            // activeColor removed to prevent Flutter v3.31.0 deprecation warning
                             checkColor: app.isDarkMode ? Colors.black : Colors.white,
-                            title: Text(year, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                            value: isSelected,
+                            title: Text("All Years", style: TextStyle(fontWeight: isAllYears ? FontWeight.bold : FontWeight.normal)),
+                            value: isAllYears,
                             onChanged: (bool? value) {
-                              app.toggleYearForTopic(topic, year);
-                              setModalState(() {}); 
+                              if (value == true) {
+                                app.clearYearsForTopic(topic);
+                                setModalState(() {});
+                              }
                             },
-                          );
-                        }),
-                      ],
+                          ),
+                          const Divider(height: 1),
+                          ...availableYears.map((year) {
+                            bool isSelected = currentSelectedYears.contains(year);
+                            return CheckboxListTile(
+                              // activeColor removed to prevent Flutter v3.31.0 deprecation warning
+                              checkColor: app.isDarkMode ? Colors.black : Colors.white,
+                              title: Text(year, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                              value: isSelected,
+                              onChanged: (bool? value) {
+                                app.toggleYearForTopic(topic, year);
+                                setModalState(() {});
+                              },
+                            );
+                          }),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -798,23 +1093,23 @@ class _MainScreenState extends State<MainScreen> {
                           Container(
                             margin: const EdgeInsets.only(right: 15),
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.surface, 
-                              borderRadius: BorderRadius.circular(20), 
+                              color: Theme.of(context).colorScheme.surface,
+                              borderRadius: BorderRadius.circular(20),
                               boxShadow:[
                                 BoxShadow(
-                                  color: app.isDarkMode ? Colors.black87 : Colors.grey.shade300, 
+                                  color: app.isDarkMode ? Colors.black87 : Colors.grey.shade300,
                                   offset: const Offset(3, 3),
                                   blurRadius: 6,
                                 ),
                                 BoxShadow(
-                                  color: app.isDarkMode ? Colors.grey.shade800 : Colors.white, 
+                                  color: app.isDarkMode ? Colors.grey.shade800 : Colors.white,
                                   offset: const Offset(-3, -3),
                                   blurRadius: 6,
                                 ),
                               ],
                             ),
                             child: Material(
-                              color: Colors.transparent, 
+                              color: Colors.transparent,
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(20),
                                 onTap: () {
@@ -823,28 +1118,20 @@ class _MainScreenState extends State<MainScreen> {
                                 },
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                  child: Text(
-                                    "SUBMIT",
-                                    style: TextStyle(
-                                      color: Theme.of(context).colorScheme.primary,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                      letterSpacing: 1.2,
-                                    ),
-                                  ),
+                                  child: Text("SUBMIT", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.2)),
                                 ),
                               ),
                             ),
                           ),
-                        
+
                         if (app.isExamMode)
                           Text(_formatTime(app.timeLeftSeconds), style: const TextStyle(color: Color(0xFFEF4444), fontSize: 20, fontWeight: FontWeight.bold)),
-                        
+
                         IconButton(icon: const Icon(Icons.tune), onPressed: () => _showFilterDialog(context, app)),
                       ],
                     ),
                   ),
-                  
+
                   Padding(
                     padding: const EdgeInsets.fromLTRB(15, 10, 15, 15),
                     child: SizedBox(
@@ -871,6 +1158,41 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
             
+            // WELCOME BANNER WIDGET
+            if (_showBanner && !app.isExamMode)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.all(15),
+                padding: const EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3))
+                ),
+                child: Row(
+                  children:[
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children:[
+                          Text("Welcome, ${app.firstName}!", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+                          const SizedBox(height: 4),
+                          Text("Ready to crush your medical boards today? Select your topics to begin.", style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8))),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 24, weight: 700),
+                      color: Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        setState(() => _showBanner = false);
+                        app.markWelcomeSeen();
+                      },
+                    )
+                  ],
+                ),
+              ),
+
             if (app.activeTopics.isNotEmpty)
               Container(
                 height: 50,
@@ -882,12 +1204,11 @@ class _MainScreenState extends State<MainScreen> {
                   children: app.activeTopics.map((t) {
                     List<String> selectedYears = app.activeTopicYears[t] ??[];
                     bool isYearFiltered = selectedYears.isNotEmpty;
-                    
-                    // Display string formatting
-                    String yearDisplay = isYearFiltered 
-                        ? (selectedYears.length == 1 ? selectedYears.first : "${selectedYears.length} Yrs") 
+
+                    String yearDisplay = isYearFiltered
+                        ? (selectedYears.length == 1 ? selectedYears.first : "${selectedYears.length} Yrs")
                         : "All";
-                    
+
                     return Container(
                       margin: const EdgeInsets.only(right: 8),
                       decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(15)),
@@ -895,22 +1216,22 @@ class _MainScreenState extends State<MainScreen> {
                         color: Colors.transparent,
                         child: InkWell(
                           borderRadius: BorderRadius.circular(15),
-                          onTap: () => _showYearSelectorBottomSheet(context, app, t), 
+                          onTap: () => _showYearSelectorBottomSheet(context, app, t),
                           child: Padding(
                             padding: const EdgeInsets.only(left: 12, right: 5),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children:[
                                 Text(t, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                                
+
                                 if (isYearFiltered)
                                   Padding(
                                     padding: const EdgeInsets.only(left: 4),
                                     child: Text("($yearDisplay)", style: TextStyle(color: app.isDarkMode ? Colors.black54 : Colors.white70, fontWeight: FontWeight.w900, fontSize: 11)),
                                   ),
-                                
+
                                 Icon(Icons.arrow_drop_down, size: 18, color: app.isDarkMode ? Colors.black54 : Colors.white70),
-                                
+
                                 const SizedBox(width: 4),
                                 GestureDetector(
                                   onTap: () => app.removeFilter(t),
@@ -929,7 +1250,7 @@ class _MainScreenState extends State<MainScreen> {
                   }).toList(),
                 ),
               ),
-            
+
             Expanded(
               child: app.filteredDB.isEmpty
                   ? Center(
@@ -945,14 +1266,20 @@ class _MainScreenState extends State<MainScreen> {
                         ),
                       ),
                     )
-                  : ListView.builder(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.all(15),
-                      itemCount: pageItems.length,
-                      itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: QuestionCard(q: pageItems[i], app: app)),
+                  : NotificationListener<ScrollUpdateNotification>(
+                      onNotification: (notif) {
+                        app.trackScrollTick(notif.scrollDelta ?? 0);
+                        return false;
+                      },
+                      child: ListView.builder(
+                        physics: const BouncingScrollPhysics(),
+                        padding: const EdgeInsets.all(15),
+                        itemCount: pageItems.length,
+                        itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: QuestionCard(q: pageItems[i], app: app)),
+                      ),
                     ),
             ),
-            
+
             if (app.totalPages > 1)
               Container(
                 height: 60,
@@ -961,30 +1288,36 @@ class _MainScreenState extends State<MainScreen> {
                   children:[
                     IconButton(icon: const Icon(Icons.chevron_left), onPressed: app.currentPage > 1 ? () => _changePage(app.currentPage - 1) : null),
                     Expanded(
-                      child: ListView.builder(
-                        controller: _pageScrollController, 
-                        scrollDirection: Axis.horizontal,
-                        itemCount: app.totalPages,
-                        itemBuilder: (context, index) {
-                          int page = index + 1;
-                          bool isActive = page == app.currentPage;
-                          return GestureDetector(
-                            onTap: () => _changePage(page),
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
-                              width: 36,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: isActive ? Theme.of(context).colorScheme.primary : Colors.transparent,
-                                borderRadius: BorderRadius.circular(10)
-                              ),
-                              child: Text("$page", style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: isActive ? (app.isDarkMode ? Colors.black : Colors.white) : Theme.of(context).colorScheme.onSurface
-                              )),
-                            )
-                          );
-                        }
+                      child: NotificationListener<ScrollUpdateNotification>(
+                        onNotification: (notif) {
+                          app.trackScrollTick(notif.scrollDelta ?? 0);
+                          return false;
+                        },
+                        child: ListView.builder(
+                          controller: _pageScrollController,
+                          scrollDirection: Axis.horizontal,
+                          itemCount: app.totalPages,
+                          itemBuilder: (context, index) {
+                            int page = index + 1;
+                            bool isActive = page == app.currentPage;
+                            return GestureDetector(
+                              onTap: () => _changePage(page),
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+                                width: 36,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: isActive ? Theme.of(context).colorScheme.primary : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(10)
+                                ),
+                                child: Text("$page", style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: isActive ? (app.isDarkMode ? Colors.black : Colors.white) : Theme.of(context).colorScheme.onSurface
+                                )),
+                              )
+                            );
+                          }
+                        ),
                       )
                     ),
                     IconButton(icon: const Icon(Icons.chevron_right), onPressed: app.currentPage < app.totalPages ? () => _changePage(app.currentPage + 1) : null),
@@ -1003,7 +1336,6 @@ class _MainScreenState extends State<MainScreen> {
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
-  // --- DRAWER WITH THEME & SOUND SETTINGS ---
   Widget _buildDrawer(AppState app, BuildContext context) {
     return Drawer(
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -1015,7 +1347,7 @@ class _MainScreenState extends State<MainScreen> {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors:[
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.8), 
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
                   Theme.of(context).colorScheme.surface
                 ],
                 begin: Alignment.topLeft,
@@ -1029,68 +1361,81 @@ class _MainScreenState extends State<MainScreen> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface, 
-                    shape: BoxShape.circle, 
+                    color: Theme.of(context).colorScheme.surface,
+                    shape: BoxShape.circle,
                     boxShadow: const[BoxShadow(color: Colors.black12, blurRadius: 10)]
                   ),
                   child: Icon(Icons.psychology, size: 40, color: Theme.of(context).colorScheme.primary),
                 ),
                 const SizedBox(height: 16),
-                RichText(
-                  text: TextSpan(
-                    text: "SYNAPSE", 
-                    style: TextStyle(fontSize: 24, letterSpacing: 1.5, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface), 
-                    children:[TextSpan(text: ".", style: TextStyle(color: Theme.of(context).colorScheme.primary))]
-                  )
-                ),
                 Text(
-                  "Premium Medical Study", 
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 12, letterSpacing: 0.5)
+                  "${app.firstName} ${app.surname}",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
                 ),
+                const SizedBox(height: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6)
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children:[
+                      Text("ID: ${app.uniqueId}", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(width: 5),
+                      GestureDetector(
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: app.uniqueId));
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID Copied!")));
+                        },
+                        child: Icon(Icons.copy, size: 14, color: Theme.of(context).colorScheme.primary),
+                      )
+                    ],
+                  ),
+                )
               ],
             ),
           ),
-          
+
           const SizedBox(height: 10),
-          
+
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               children:[
                 _buildDrawerItem(
-                  context, 
-                  icon: Icons.menu_book_rounded, 
-                  title: "Study Mode", 
+                  context,
+                  icon: Icons.menu_book_rounded,
+                  title: "Study Mode",
                   onTap: () { app.exitExamMode(); Navigator.pop(context); }
                 ),
                 _buildDrawerItem(
-                  context, 
-                  icon: Icons.timer_rounded, 
-                  title: "Exam Mode", 
+                  context,
+                  icon: Icons.timer_rounded,
+                  title: "Exam Mode",
                   onTap: () { Navigator.pop(context); _showExamTimeDialog(context, app); }
                 ),
                 _buildDrawerItem(
-                  context, 
-                  icon: Icons.library_books_rounded, 
-                  title: "Study Materials", 
-                  subtitle: "Coming Soon", 
-                  onTap: () { }
+                  context,
+                  icon: Icons.logout_rounded,
+                  title: "Log Out",
+                  subtitle: "Testing only",
+                  onTap: () { Navigator.pop(context); app.logOut(); }
                 ),
                 const Divider(height: 20),
-                
-                // APP SETTINGS SECTION
+
                 Padding(
                   padding: const EdgeInsets.only(left: 16, top: 10, bottom: 10),
                   child: Text("APPEARANCE", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
                 ),
-                
-                // Theme Color Selector
+
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     children:[
-                      Expanded(child: Text("Theme Color", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
-                      // Map through available thick colors to create dots
+                      const Expanded(child: Text("Theme Color", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
                       ...List.generate(app.availableColors.length, (index) {
                         bool isSelected = app.themeColorIndex == index;
                         return GestureDetector(
@@ -1110,14 +1455,13 @@ class _MainScreenState extends State<MainScreen> {
                     ]
                   ),
                 ),
-                
-                // Light/Dark Mode Toggle
+
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   title: const Text("Dark Mode", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   trailing: Switch(
                     value: app.isDarkMode,
-                    activeColor: Theme.of(context).colorScheme.primary,
+                    // activeColor removed to prevent Flutter v3.31.0 deprecation warning
                     onChanged: (val) => app.toggleThemeMode(),
                   ),
                 ),
@@ -1128,19 +1472,17 @@ class _MainScreenState extends State<MainScreen> {
                   child: Text("SOUNDS & HAPTICS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
                 ),
 
-                // Sound Toggle
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   title: const Text("Scroll Ticks", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   subtitle: Text("Mechanical wheel sounds", style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary)),
                   trailing: Switch(
                     value: app.soundEnabled,
-                    activeColor: Theme.of(context).colorScheme.primary,
+                    // activeColor removed to prevent Flutter v3.31.0 deprecation warning
                     onChanged: (val) => app.toggleSound(val),
                   ),
                 ),
-                
-                // Volume Slider Placeholder (Visual control for native sounds)
+
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
@@ -1149,11 +1491,10 @@ class _MainScreenState extends State<MainScreen> {
                       Expanded(
                         child: Slider(
                           value: app.soundVolume,
-                          activeColor: Theme.of(context).colorScheme.primary,
+                          // activeColor removed to prevent Flutter v3.31.0 deprecation warning
                           inactiveColor: Theme.of(context).colorScheme.outline,
                           onChanged: app.soundEnabled ? (val) {
-                            // Only update visual variable to satisfy UI requirements
-                            setState(() => app.soundVolume = val);
+                            app.setVolume(val);
                           } : null,
                         ),
                       ),
@@ -1165,6 +1506,11 @@ class _MainScreenState extends State<MainScreen> {
               ],
             ),
           ),
+          // COPYRIGHT TEXT ADDED HERE
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text("© awe 2026", style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
     );
@@ -1173,7 +1519,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildDrawerItem(BuildContext context, {required IconData icon, required String title, String? subtitle, required VoidCallback onTap}) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), 
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
       subtitle: subtitle != null ? Text(subtitle, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary)) : null,
@@ -1183,7 +1529,7 @@ class _MainScreenState extends State<MainScreen> {
 
   void _showFilterDialog(BuildContext context, AppState app) {
     List<String> tempFilters = List.from(app.activeTopics);
-    
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1198,21 +1544,27 @@ class _MainScreenState extends State<MainScreen> {
               child: Column(
                 children:[
                   Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      itemCount: app.allTopics.length,
-                      itemBuilder: (c, i) {
-                        String t = app.allTopics[i];
-                        bool isSelected = tempFilters.contains(t);
-                        return ListTile(
-                          title: Text(t, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                          trailing: Icon(isSelected ? Icons.check_circle : Icons.radio_button_unchecked, color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)),
-                          onTap: () => setState(() => isSelected ? tempFilters.remove(t) : tempFilters.add(t)),
-                        );
-                      }
+                    child: NotificationListener<ScrollUpdateNotification>(
+                      onNotification: (notif) {
+                        app.trackScrollTick(notif.scrollDelta ?? 0);
+                        return false;
+                      },
+                      child: ListView.builder(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        itemCount: app.allTopics.length,
+                        itemBuilder: (c, i) {
+                          String t = app.allTopics[i];
+                          bool isSelected = tempFilters.contains(t);
+                          return ListTile(
+                            title: Text(t, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                            trailing: Icon(isSelected ? Icons.check_circle : Icons.radio_button_unchecked, color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)),
+                            onTap: () => setState(() => isSelected ? tempFilters.remove(t) : tempFilters.add(t)),
+                          );
+                        }
+                      ),
                     )
                   ),
-                  
+
                   Container(
                     height: 60,
                     padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1222,16 +1574,16 @@ class _MainScreenState extends State<MainScreen> {
                           child: TextButton(
                             style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3), foregroundColor: Theme.of(context).colorScheme.onSurface),
                             onPressed: () {
-                              setState(() => tempFilters.clear()); 
-                              app.activeTopicYears.clear(); 
-                              app.applyFiltersWith(tempFilters); 
-                              Navigator.pop(ctx); 
+                              setState(() => tempFilters.clear());
+                              app.activeTopicYears.clear();
+                              app.applyFiltersWith(tempFilters);
+                              Navigator.pop(ctx);
                             },
                             child: const Text("RESET", style: TextStyle(fontWeight: FontWeight.bold))
                           )
                         ),
                         const SizedBox(width: 10),
-                        
+
                         Expanded(
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: app.isDarkMode ? Colors.black : Colors.white),
@@ -1254,11 +1606,10 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // --- UPGRADED MINUTES SELECTOR (1 to 59 with sounds) ---
   void _showExamTimeDialog(BuildContext context, AppState app) {
     int selectedHour = 0;
     int selectedMin = 10;
-    
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1278,7 +1629,7 @@ class _MainScreenState extends State<MainScreen> {
                           child: ListWheelScrollView.useDelegate(
                             itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
                             onSelectedItemChanged: (v) {
-                              app.playScrollSound(); // Native Krrrrrr Tick
+                              app.playScrollSound();
                               setState(() => selectedHour = v);
                             },
                             childDelegate: ListWheelChildBuilderDelegate(
@@ -1297,14 +1648,12 @@ class _MainScreenState extends State<MainScreen> {
                         Expanded(
                           child: ListWheelScrollView.useDelegate(
                             itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
-                            // Set initial starting position to 10
                             controller: FixedExtentScrollController(initialItem: 10),
                             onSelectedItemChanged: (v) {
-                              app.playScrollSound(); // Native Krrrrrr Tick
+                              app.playScrollSound();
                               setState(() => selectedMin = v);
                             },
                             childDelegate: ListWheelChildBuilderDelegate(
-                              // Goes from 0 to 59 natively
                               childCount: 60,
                               builder: (ctx, val) {
                                 return Center(child: Text("$val".padLeft(2, '0'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: selectedMin == val ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4))));
@@ -1322,7 +1671,7 @@ class _MainScreenState extends State<MainScreen> {
               TextButton(
                 onPressed: () {
                   int totalMins = selectedHour * 60 + selectedMin;
-                  if (totalMins == 0) totalMins = 1; // Failsafe to minimum 1 min
+                  if (totalMins == 0) totalMins = 1;
                   app.startExam(totalMins);
                   Navigator.pop(ctx);
                 },
@@ -1337,7 +1686,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ----------------------------------------------------------------------------
-// 8. QUESTION CARD AND ROOT WIDGETS 
+// 8. QUESTION CARD AND ROOT WIDGETS
 // ----------------------------------------------------------------------------
 class QuestionCard extends StatelessWidget {
   final QuestionModel q;
@@ -1366,8 +1715,8 @@ class QuestionCard extends StatelessWidget {
             GestureDetector(
               onTap: () => app.toggleAllAnswersForQuestion(q.id),
               child: Container(
-                width: double.infinity, height: 42, alignment: Alignment.center, 
-                decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.outline), borderRadius: BorderRadius.circular(8)), 
+                width: double.infinity, height: 42, alignment: Alignment.center,
+                decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.outline), borderRadius: BorderRadius.circular(8)),
                 child: Text(app.isQuestionRevealed(q.id) ? "HIDE ANSWERS" : "SHOW ANSWERS", style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontWeight: FontWeight.bold, fontSize: 12))
               ),
             )
@@ -1419,8 +1768,8 @@ class _RootWidget extends StatelessWidget {
               GestureDetector(
                 onTap: () => app.handleDotClick(r.id, r.answer),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200), width: 34, height: 34, alignment: Alignment.center, 
-                  decoration: BoxDecoration(color: dotBg, shape: BoxShape.circle, border: Border.all(color: dotBorder, width: 1.5)), 
+                  duration: const Duration(milliseconds: 200), width: 34, height: 34, alignment: Alignment.center,
+                  decoration: BoxDecoration(color: dotBg, shape: BoxShape.circle, border: Border.all(color: dotBorder, width: 1.5)),
                   child: Text(dotText, style: TextStyle(fontWeight: FontWeight.bold, color: dotTextColor, fontSize: 14))
                 ),
               ),
@@ -1432,11 +1781,11 @@ class _RootWidget extends StatelessWidget {
         AnimatedSize(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutQuad,
-          child: (showExp && !app.isExamMode) 
+          child: (showExp && !app.isExamMode)
             ? Container(
                 margin: const EdgeInsets.only(left: 49, bottom: 5, right: 10),
                 child: Text(r.info, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontStyle: FontStyle.italic, fontSize: 13))
-              ) 
+              )
             : const SizedBox.shrink(),
         ),
       ],
@@ -1453,7 +1802,7 @@ class ResultScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    bool passed = app.finalScore >= 70; 
+    bool passed = app.finalScore >= 70;
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -1464,7 +1813,7 @@ class ResultScreen extends StatelessWidget {
               SizedBox(
                 height: 220,
                 child: Stack(
-                  alignment: Alignment.center, 
+                  alignment: Alignment.center,
                   children:[
                     TweenAnimationBuilder<double>(
                       tween: Tween<double>(begin: 0, end: app.finalScore / 100),
@@ -1474,9 +1823,9 @@ class ResultScreen extends StatelessWidget {
                         return SizedBox(
                           width: 150, height: 150,
                           child: CircularProgressIndicator(
-                            value: value, strokeWidth: 14, 
-                            backgroundColor: Theme.of(context).colorScheme.outline, 
-                            color: passed ? const Color(0xFF10B981) : const Color(0xFFEF4444) 
+                            value: value, strokeWidth: 14,
+                            backgroundColor: Theme.of(context).colorScheme.outline,
+                            color: passed ? const Color(0xFF10B981) : const Color(0xFFEF4444)
                           )
                         );
                       }
@@ -1494,9 +1843,8 @@ class ResultScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity, height: 55,
                 child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), 
-                  // FIX: Changed from pushReplacement to push so back button drops here
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReviewScreen(app: app))), 
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReviewScreen(app: app))),
                   child: const Text("REVIEW TOPICS", style: TextStyle(fontWeight: FontWeight.bold))
                 )
               ),
@@ -1504,8 +1852,8 @@ class ResultScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity, height: 55,
                 child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.onSurface, foregroundColor: Theme.of(context).colorScheme.surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), 
-                  onPressed: () { app.exitExamMode(); Navigator.pop(context); }, 
+                  style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.onSurface, foregroundColor: Theme.of(context).colorScheme.surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  onPressed: () { app.exitExamMode(); Navigator.pop(context); },
                   child: const Text("RETURN TO STUDY", style: TextStyle(fontWeight: FontWeight.bold))
                 )
               ),
@@ -1532,46 +1880,52 @@ class ReviewScreen extends StatelessWidget {
               height: 50,
               child: Row(
                 children:[
-                  IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), // Returns to ResultScreen smoothly
+                  IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
                   const Text("TOPIC BREAKDOWN", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 ],
               )
             ),
             Expanded(
-              child: ListView.separated(
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.all(20),
-                itemCount: topics.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 15),
-                itemBuilder: (ctx, i) {
-                  String topic = topics[i].key;
-                  int total = topics[i].value['total']!;
-                  int correct = topics[i].value['correct']!;
-                  int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
-                  
-                  Color color = pct >= 80 ? const Color(0xFF10B981) : (pct >= 50 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
-                  IconData icon = pct >= 80 ? Icons.check_circle : (pct >= 50 ? Icons.error : Icons.cancel);
-
-                  return Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DetailedReviewScreen(app: app, topic: topic))),
-                      child: Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
-                        child: Row(children:[
-                          Icon(icon, color: color, size: 28),
-                          const SizedBox(width: 15),
-                          Expanded(child: Text(topic, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
-                          Text("$pct%", style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
-                          const SizedBox(width: 10),
-                          Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)), 
-                        ]),
-                      ),
-                    ),
-                  );
+              child: NotificationListener<ScrollUpdateNotification>(
+                onNotification: (notif) {
+                  app.trackScrollTick(notif.scrollDelta ?? 0);
+                  return false;
                 },
+                child: ListView.separated(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.all(20),
+                  itemCount: topics.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 15),
+                  itemBuilder: (ctx, i) {
+                    String topic = topics[i].key;
+                    int total = topics[i].value['total']!;
+                    int correct = topics[i].value['correct']!;
+                    int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
+                    
+                    Color color = pct >= 80 ? const Color(0xFF10B981) : (pct >= 50 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
+                    IconData icon = pct >= 80 ? Icons.check_circle : (pct >= 50 ? Icons.error : Icons.cancel);
+                
+                    return Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DetailedReviewScreen(app: app, topic: topic))),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
+                          child: Row(children:[
+                            Icon(icon, color: color, size: 28),
+                            const SizedBox(width: 15),
+                            Expanded(child: Text(topic, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+                            Text("$pct%", style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 10),
+                            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)),
+                          ]),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ],
@@ -1607,11 +1961,17 @@ class DetailedReviewScreen extends StatelessWidget {
               )
             ),
             Expanded(
-              child: ListView.builder(
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.all(15),
-                itemCount: topicQuestions.length,
-                itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: _ReviewQuestionCard(q: topicQuestions[i], app: app)),
+              child: NotificationListener<ScrollUpdateNotification>(
+                onNotification: (notif) {
+                  app.trackScrollTick(notif.scrollDelta ?? 0);
+                  return false;
+                },
+                child: ListView.builder(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.all(15),
+                  itemCount: topicQuestions.length,
+                  itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: _ReviewQuestionCard(q: topicQuestions[i], app: app)),
+                ),
               ),
             ),
           ],
@@ -1666,7 +2026,7 @@ class _ReviewRootWidget extends StatelessWidget {
     Color dotBg = Colors.transparent;
     Color dotBorder = Theme.of(context).colorScheme.outline;
     Color dotTextColor = Theme.of(context).colorScheme.onSurface;
-    String dotText = actualAns; 
+    String dotText = actualAns;
     
     Color badgeColor = Colors.transparent;
     Color badgeTextColor = Colors.white;
@@ -1674,13 +2034,13 @@ class _ReviewRootWidget extends StatelessWidget {
     IconData? badgeIcon;
 
     if (isUnanswered) {
-      dotBorder = Colors.grey; 
+      dotBorder = Colors.grey;
       dotTextColor = Colors.grey;
       badgeColor = Colors.grey.shade600;
       badgeText = "UNANSWERED";
       badgeIcon = Icons.remove;
     } else if (isCorrect) {
-      dotBg = const Color(0xFF10B981); 
+      dotBg = const Color(0xFF10B981);
       dotBorder = dotBg;
       dotTextColor = Colors.white;
       badgeColor = const Color(0xFF10B981).withValues(alpha: 0.2);
@@ -1688,7 +2048,7 @@ class _ReviewRootWidget extends StatelessWidget {
       badgeText = "CORRECT";
       badgeIcon = Icons.check;
     } else {
-      dotBg = const Color(0xFFEF4444); 
+      dotBg = const Color(0xFFEF4444);
       dotBorder = dotBg;
       dotTextColor = Colors.white;
       badgeColor = const Color(0xFFEF4444).withValues(alpha: 0.2);
@@ -1706,8 +2066,8 @@ class _ReviewRootWidget extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children:[
               Container(
-                width: 34, height: 34, alignment: Alignment.center, 
-                decoration: BoxDecoration(color: dotBg, shape: BoxShape.circle, border: Border.all(color: dotBorder, width: 1.5)), 
+                width: 34, height: 34, alignment: Alignment.center,
+                decoration: BoxDecoration(color: dotBg, shape: BoxShape.circle, border: Border.all(color: dotBorder, width: 1.5)),
                 child: Text(dotText, style: TextStyle(fontWeight: FontWeight.bold, color: dotTextColor, fontSize: 14))
               ),
               const SizedBox(width: 15),
@@ -1716,7 +2076,7 @@ class _ReviewRootWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children:[
                     GestureDetector(
-                      onTap: () => app.toggleExplanation(r.id), 
+                      onTap: () => app.toggleExplanation(r.id),
                       child: Text(r.text, style: const TextStyle(fontSize: 15, height: 1.3))
                     ),
                     const SizedBox(height: 6),
@@ -1741,11 +2101,11 @@ class _ReviewRootWidget extends StatelessWidget {
         AnimatedSize(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutQuad,
-          child: showExp 
+          child: showExp
             ? Container(
                 margin: const EdgeInsets.only(left: 49, bottom: 10, right: 10),
                 child: Text(r.info, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontStyle: FontStyle.italic, fontSize: 13))
-              ) 
+              )
             : const SizedBox.shrink(),
         ),
       ],
