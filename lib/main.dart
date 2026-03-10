@@ -1,7 +1,7 @@
 // ============================================================================
 // FILE: main.dart
 // PROJECT: SYNAPSE - MEDICAL PAST QUESTIONS (FLUTTER EDITION)
-// UPGRADE: Year Dropdowns, Detailed Topic Drill-downs, Premium UI
+// UPGRADE: Custom Themes, Multi-Year Filters, Haptic Sounds, Navigation Fixes
 // ============================================================================
 
 import 'dart:async';
@@ -11,7 +11,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'; 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/services.dart'; // Needed for HapticFeedback and Sounds
 import 'package:http/http.dart' as http;
 import 'package:csv/csv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,6 +22,8 @@ import 'package:path_provider/path_provider.dart';
 // ----------------------------------------------------------------------------
 const String csvUrl = "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
 const String themeKey = "synapse_theme_mode";
+const String colorIndexKey = "synapse_color_index"; // NEW: Saves custom color
+const String soundPrefKey = "synapse_sound_pref"; // NEW: Saves sound toggle
 const String firstRunKey = "synapse_first_run";
 const String cacheFileName = "synapse_offline_db.json";
 
@@ -167,8 +169,13 @@ String _encodeJsonCacheInBackground(List<QuestionModel> data) {
 // ----------------------------------------------------------------------------
 class AppState extends ChangeNotifier {
   bool isDarkMode = true;
+  int themeColorIndex = 0; // 0: Amber, 1: Teal, 2: Purple
   bool isFirstRun = true;
   bool isLoading = true;
+  
+  bool soundEnabled = true; // Toggle for mechanical scroll sounds
+  double soundVolume = 1.0; // Dummy visual variable for future audio expansion
+
   String errorMessage = "";
 
   List<QuestionModel> fullDB =[];
@@ -178,8 +185,8 @@ class AppState extends ChangeNotifier {
   List<String> activeTopics =[];
   List<String> allTopics =[];
   
-  // NEW: Map to track specifically selected years per topic. Null means "All".
-  Map<String, String?> activeTopicYears = {}; 
+  // NEW: Multi-Year Selection (List instead of single string)
+  Map<String, List<String>> activeTopicYears = {}; 
   
   int currentPage = 1;
   int itemsPerPage = 5; 
@@ -195,13 +202,25 @@ class AppState extends ChangeNotifier {
   int finalScore = 0;
   Map<String, Map<String, int>> topicPerformance = {};
 
+  // Custom Color Palettes
+  final List<Color> availableColors =[
+    const Color(0xFFF59E0B), // Thick Amber
+    const Color(0xFF14B8A6), // Premium Teal
+    const Color(0xFF8B5CF6), // Deep Purple
+  ];
+
+  Color get currentPrimaryColor => availableColors[themeColorIndex];
+
   AppState() {
     initData();
   }
 
   Future<void> initData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
+    
     isDarkMode = prefs.getBool(themeKey) ?? true;
+    themeColorIndex = prefs.getInt(colorIndexKey) ?? 0;
+    soundEnabled = prefs.getBool(soundPrefKey) ?? true;
     isFirstRun = prefs.getBool(firstRunKey) ?? true;
 
     await _loadLocalFileCache();
@@ -263,11 +282,33 @@ class AppState extends ChangeNotifier {
     await prefs.setBool(firstRunKey, false);
   }
 
-  void toggleTheme() async {
+  void toggleThemeMode() async {
     isDarkMode = !isDarkMode;
     notifyListeners();
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setBool(themeKey, isDarkMode);
+  }
+
+  void setThemeColor(int index) async {
+    themeColorIndex = index;
+    notifyListeners();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(colorIndexKey, themeColorIndex);
+  }
+
+  void toggleSound(bool val) async {
+    soundEnabled = val;
+    notifyListeners();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(soundPrefKey, soundEnabled);
+  }
+
+  void playScrollSound() {
+    if (soundEnabled) {
+      // Hardware level mechanical tick (Zero lag)
+      HapticFeedback.selectionClick(); 
+      SystemSound.play(SystemSoundType.click); 
+    }
   }
 
   void _setupData() {
@@ -279,7 +320,7 @@ class AppState extends ChangeNotifier {
     applyFilters();
   }
 
-  // ENHANCED FILTER: Now respects Year dropdown selections
+  // ENHANCED FILTER: Respects MULTIPLE selected years per topic
   void applyFilters() {
     filteredDB = fullDB.where((q) {
       bool searchMatch = searchText.isEmpty || 
@@ -289,12 +330,14 @@ class AppState extends ChangeNotifier {
       bool topicMatch = true;
       if (activeTopics.isNotEmpty) {
         if (!activeTopics.contains(q.topic)) {
-          topicMatch = false; // It's not one of our selected topics
+          topicMatch = false; 
         } else {
-          // If it is our selected topic, check if a year constraint is applied
-          String? enforcedYear = activeTopicYears[q.topic];
-          if (enforcedYear != null && enforcedYear != "All" && q.year != enforcedYear) {
-            topicMatch = false; // Wrong year
+          // If years are selected for this topic, ensure q.year matches one of them
+          List<String>? enforcedYears = activeTopicYears[q.topic];
+          if (enforcedYears != null && enforcedYears.isNotEmpty) {
+            if (!enforcedYears.contains(q.year)) {
+              topicMatch = false; 
+            }
           }
         }
       }
@@ -307,21 +350,30 @@ class AppState extends ChangeNotifier {
 
   void applyFiltersWith(List<String> tempFilters) {
     activeTopics = List.from(tempFilters);
-    // Cleanup any year filters for topics that were removed
     activeTopicYears.removeWhere((key, value) => !activeTopics.contains(key));
     applyFilters();
   }
 
-  // Clears a topic and its associated year filter
   void removeFilter(String topic) {
     activeTopics.remove(topic);
     activeTopicYears.remove(topic);
     applyFilters();
   }
 
-  // Apply a specific year filter to a topic
-  void setYearForTopic(String topic, String? year) {
-    activeTopicYears[topic] = year;
+  // Toggles a specific year in the multi-select array
+  void toggleYearForTopic(String topic, String year) {
+    activeTopicYears.putIfAbsent(topic, () => []);
+    if (activeTopicYears[topic]!.contains(year)) {
+      activeTopicYears[topic]!.remove(year);
+    } else {
+      activeTopicYears[topic]!.add(year);
+    }
+    applyFilters();
+  }
+
+  // Resets to "All Years"
+  void clearYearsForTopic(String topic) {
+    activeTopicYears[topic] =[];
     applyFilters();
   }
 
@@ -398,8 +450,6 @@ class AppState extends ChangeNotifier {
   }
 
   void toggleExplanation(String rootId) {
-    // We actually DO want to allow explanation reveals in the detailed Review Drill-down
-    // So we don't return early here anymore. The UI logic handles hiding the button in exams.
     explanationRevealed[rootId] = !(explanationRevealed[rootId] ?? false);
     notifyListeners();
   }
@@ -446,23 +496,23 @@ class _SynapseAppState extends State<SynapseApp> {
     super.dispose();
   }
 
-  ThemeData _buildTheme(bool isDark) {
+  ThemeData _buildTheme(bool isDark, Color primary) {
     return ThemeData(
       useMaterial3: true,
       brightness: isDark ? Brightness.dark : Brightness.light,
       scaffoldBackgroundColor: isDark ? const Color(0xFF000000) : const Color(0xFFF3F4F6),
       colorScheme: isDark 
-        ? const ColorScheme.dark(
-            primary: Color(0xFFF59E0B), 
-            surface: Color(0xFF111827), 
-            onSurface: Color(0xFFF9FAFB), 
-            outline: Color(0xFF1F2937), 
+        ? ColorScheme.dark(
+            primary: primary, 
+            surface: const Color(0xFF111827), 
+            onSurface: const Color(0xFFF9FAFB), 
+            outline: const Color(0xFF1F2937), 
           )
-        : const ColorScheme.light(
-            primary: Color(0xFF3B82F6), 
-            surface: Color(0xFFFFFFFF), 
-            onSurface: Color(0xFF111827), 
-            outline: Color(0xFFE5E7EB), 
+        : ColorScheme.light(
+            primary: primary, 
+            surface: const Color(0xFFFFFFFF), 
+            onSurface: const Color(0xFF111827), 
+            outline: const Color(0xFFE5E7EB), 
           ),
       fontFamily: 'Roboto',
     );
@@ -472,7 +522,7 @@ class _SynapseAppState extends State<SynapseApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: _buildTheme(state.isDarkMode),
+      theme: _buildTheme(state.isDarkMode, state.currentPrimaryColor),
       home: state.isLoading 
           ? const SplashLoaderScreen() 
           : (state.isFirstRun ? OnboardingScreen(app: state) : MainScreen(app: state)),
@@ -622,75 +672,83 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // --- NEW: GORGEOUS YEAR DROPDOWN BOTTOM SHEET ---
+  // --- MULTI-YEAR SELECTOR BOTTOM SHEET ---
   void _showYearSelectorBottomSheet(BuildContext context, AppState app, String topic) {
-    // Extract available years specifically for this topic
     List<String> availableYears = app.fullDB
         .where((q) => q.topic == topic && q.year.isNotEmpty)
         .map((q) => q.year)
         .toSet()
         .toList()
-        ..sort((a, b) => b.compareTo(a)); // Sort newest to oldest
-        
-    String? currentSelectedYear = app.activeTopicYears[topic];
+        ..sort((a, b) => b.compareTo(a)); 
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children:[
-              // Premium drag handle
-              Container(
-                margin: const EdgeInsets.only(top: 12, bottom: 8),
-                height: 5, width: 40,
-                decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(10)),
+        // StatefulBuilder allows checkboxes to tick instantly without closing the modal
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            List<String> currentSelectedYears = app.activeTopicYears[topic] ??[];
+            bool isAllYears = currentSelectedYears.isEmpty;
+
+            return Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
               ),
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text("Filter Year for $topic", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  physics: const BouncingScrollPhysics(),
-                  children:[
-                    // The "All Years" option
-                    ListTile(
-                      leading: Icon(Icons.calendar_today, color: currentSelectedYear == null || currentSelectedYear == "All" ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
-                      title: Text("All Years", style: TextStyle(fontWeight: currentSelectedYear == null || currentSelectedYear == "All" ? FontWeight.bold : FontWeight.normal)),
-                      trailing: currentSelectedYear == null || currentSelectedYear == "All" ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : null,
-                      onTap: () {
-                        app.setYearForTopic(topic, "All");
-                        Navigator.pop(ctx);
-                      },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children:[
+                  Container(
+                    margin: const EdgeInsets.only(top: 12, bottom: 8),
+                    height: 5, width: 40,
+                    decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(10)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text("Filter Years for $topic", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      physics: const BouncingScrollPhysics(),
+                      children:[
+                        // "All Years" resets the array
+                        CheckboxListTile(
+                          activeColor: Theme.of(context).colorScheme.primary,
+                          checkColor: app.isDarkMode ? Colors.black : Colors.white,
+                          title: Text("All Years", style: TextStyle(fontWeight: isAllYears ? FontWeight.bold : FontWeight.normal)),
+                          value: isAllYears,
+                          onChanged: (bool? value) {
+                            if (value == true) {
+                              app.clearYearsForTopic(topic);
+                              setModalState(() {});
+                            }
+                          },
+                        ),
+                        const Divider(height: 1),
+                        // Multiple specific years
+                        ...availableYears.map((year) {
+                          bool isSelected = currentSelectedYears.contains(year);
+                          return CheckboxListTile(
+                            activeColor: Theme.of(context).colorScheme.primary,
+                            checkColor: app.isDarkMode ? Colors.black : Colors.white,
+                            title: Text(year, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                            value: isSelected,
+                            onChanged: (bool? value) {
+                              app.toggleYearForTopic(topic, year);
+                              setModalState(() {}); 
+                            },
+                          );
+                        }),
+                      ],
                     ),
-                    const Divider(height: 1),
-                    // Loop through available years
-                    ...availableYears.map((year) {
-                      bool isSelected = currentSelectedYear == year;
-                      return ListTile(
-                        leading: Icon(Icons.history, color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
-                        title: Text(year, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                        trailing: isSelected ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : null,
-                        onTap: () {
-                          app.setYearForTopic(topic, year);
-                          Navigator.pop(ctx);
-                        },
-                      );
-                    }),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
               ),
-              const SizedBox(height: 20),
-            ],
-          ),
+            );
+          }
         );
       }
     );
@@ -813,7 +871,6 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
             
-            // FILTER CHIPS ROW - NOW INTERACTIVE FOR YEAR SELECTION
             if (app.activeTopics.isNotEmpty)
               Container(
                 height: 50,
@@ -823,8 +880,13 @@ class _MainScreenState extends State<MainScreen> {
                   physics: const BouncingScrollPhysics(),
                   padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
                   children: app.activeTopics.map((t) {
-                    String selectedYear = app.activeTopicYears[t] ?? "All";
-                    bool isYearFiltered = selectedYear != "All";
+                    List<String> selectedYears = app.activeTopicYears[t] ??[];
+                    bool isYearFiltered = selectedYears.isNotEmpty;
+                    
+                    // Display string formatting
+                    String yearDisplay = isYearFiltered 
+                        ? (selectedYears.length == 1 ? selectedYears.first : "${selectedYears.length} Yrs") 
+                        : "All";
                     
                     return Container(
                       margin: const EdgeInsets.only(right: 8),
@@ -833,27 +895,23 @@ class _MainScreenState extends State<MainScreen> {
                         color: Colors.transparent,
                         child: InkWell(
                           borderRadius: BorderRadius.circular(15),
-                          onTap: () => _showYearSelectorBottomSheet(context, app, t), // Triggers Dropdown Sheet
+                          onTap: () => _showYearSelectorBottomSheet(context, app, t), 
                           child: Padding(
                             padding: const EdgeInsets.only(left: 12, right: 5),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children:[
-                                // Main topic text
                                 Text(t, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
                                 
-                                // Specific Year indicator
                                 if (isYearFiltered)
                                   Padding(
                                     padding: const EdgeInsets.only(left: 4),
-                                    child: Text("($selectedYear)", style: TextStyle(color: app.isDarkMode ? Colors.black54 : Colors.white70, fontWeight: FontWeight.w900, fontSize: 11)),
+                                    child: Text("($yearDisplay)", style: TextStyle(color: app.isDarkMode ? Colors.black54 : Colors.white70, fontWeight: FontWeight.w900, fontSize: 11)),
                                   ),
                                 
-                                // Tiny Dropdown Arrow
                                 Icon(Icons.arrow_drop_down, size: 18, color: app.isDarkMode ? Colors.black54 : Colors.white70),
                                 
                                 const SizedBox(width: 4),
-                                // Close X Button (Removes topic entirely)
                                 GestureDetector(
                                   onTap: () => app.removeFilter(t),
                                   child: Container(
@@ -945,6 +1003,7 @@ class _MainScreenState extends State<MainScreen> {
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
+  // --- DRAWER WITH THEME & SOUND SETTINGS ---
   Widget _buildDrawer(AppState app, BuildContext context) {
     return Drawer(
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -1017,13 +1076,92 @@ class _MainScreenState extends State<MainScreen> {
                   subtitle: "Coming Soon", 
                   onTap: () { }
                 ),
-                const Divider(height: 30),
-                _buildDrawerItem(
-                  context, 
-                  icon: app.isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded, 
-                  title: "Toggle Theme", 
-                  onTap: () { app.toggleTheme(); }
+                const Divider(height: 20),
+                
+                // APP SETTINGS SECTION
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, top: 10, bottom: 10),
+                  child: Text("APPEARANCE", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
                 ),
+                
+                // Theme Color Selector
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children:[
+                      Expanded(child: Text("Theme Color", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
+                      // Map through available thick colors to create dots
+                      ...List.generate(app.availableColors.length, (index) {
+                        bool isSelected = app.themeColorIndex == index;
+                        return GestureDetector(
+                          onTap: () => app.setThemeColor(index),
+                          child: Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            width: 28, height: 28,
+                            decoration: BoxDecoration(
+                              color: app.availableColors[index],
+                              shape: BoxShape.circle,
+                              border: isSelected ? Border.all(color: Theme.of(context).colorScheme.onSurface, width: 2) : null,
+                            ),
+                            child: isSelected ? const Icon(Icons.check, size: 16, color: Colors.white) : null,
+                          ),
+                        );
+                      }),
+                    ]
+                  ),
+                ),
+                
+                // Light/Dark Mode Toggle
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                  title: const Text("Dark Mode", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                  trailing: Switch(
+                    value: app.isDarkMode,
+                    activeColor: Theme.of(context).colorScheme.primary,
+                    onChanged: (val) => app.toggleThemeMode(),
+                  ),
+                ),
+
+                const Divider(height: 20),
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, top: 10, bottom: 5),
+                  child: Text("SOUNDS & HAPTICS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
+                ),
+
+                // Sound Toggle
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                  title: const Text("Scroll Ticks", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                  subtitle: Text("Mechanical wheel sounds", style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary)),
+                  trailing: Switch(
+                    value: app.soundEnabled,
+                    activeColor: Theme.of(context).colorScheme.primary,
+                    onChanged: (val) => app.toggleSound(val),
+                  ),
+                ),
+                
+                // Volume Slider Placeholder (Visual control for native sounds)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children:[
+                      Icon(Icons.volume_down, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+                      Expanded(
+                        child: Slider(
+                          value: app.soundVolume,
+                          activeColor: Theme.of(context).colorScheme.primary,
+                          inactiveColor: Theme.of(context).colorScheme.outline,
+                          onChanged: app.soundEnabled ? (val) {
+                            // Only update visual variable to satisfy UI requirements
+                            setState(() => app.soundVolume = val);
+                          } : null,
+                        ),
+                      ),
+                      Icon(Icons.volume_up, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
@@ -1085,7 +1223,7 @@ class _MainScreenState extends State<MainScreen> {
                             style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3), foregroundColor: Theme.of(context).colorScheme.onSurface),
                             onPressed: () {
                               setState(() => tempFilters.clear()); 
-                              app.activeTopicYears.clear(); // Reset all years
+                              app.activeTopicYears.clear(); 
                               app.applyFiltersWith(tempFilters); 
                               Navigator.pop(ctx); 
                             },
@@ -1116,6 +1254,7 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
+  // --- UPGRADED MINUTES SELECTOR (1 to 59 with sounds) ---
   void _showExamTimeDialog(BuildContext context, AppState app) {
     int selectedHour = 0;
     int selectedMin = 10;
@@ -1138,7 +1277,10 @@ class _MainScreenState extends State<MainScreen> {
                         Expanded(
                           child: ListWheelScrollView.useDelegate(
                             itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
-                            onSelectedItemChanged: (v) => setState(() => selectedHour = v),
+                            onSelectedItemChanged: (v) {
+                              app.playScrollSound(); // Native Krrrrrr Tick
+                              setState(() => selectedHour = v);
+                            },
                             childDelegate: ListWheelChildBuilderDelegate(
                               childCount: 13,
                               builder: (ctx, i) => Center(child: Text("$i".padLeft(2, '0'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: selectedHour == i ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4))))
@@ -1155,11 +1297,16 @@ class _MainScreenState extends State<MainScreen> {
                         Expanded(
                           child: ListWheelScrollView.useDelegate(
                             itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
-                            onSelectedItemChanged: (v) => setState(() => selectedMin = v * 5),
+                            // Set initial starting position to 10
+                            controller: FixedExtentScrollController(initialItem: 10),
+                            onSelectedItemChanged: (v) {
+                              app.playScrollSound(); // Native Krrrrrr Tick
+                              setState(() => selectedMin = v);
+                            },
                             childDelegate: ListWheelChildBuilderDelegate(
-                              childCount: 12,
-                              builder: (ctx, index) {
-                                int val = index * 5;
+                              // Goes from 0 to 59 natively
+                              childCount: 60,
+                              builder: (ctx, val) {
                                 return Center(child: Text("$val".padLeft(2, '0'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: selectedMin == val ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4))));
                               }
                             )
@@ -1175,7 +1322,7 @@ class _MainScreenState extends State<MainScreen> {
               TextButton(
                 onPressed: () {
                   int totalMins = selectedHour * 60 + selectedMin;
-                  if (totalMins == 0) totalMins = 10; 
+                  if (totalMins == 0) totalMins = 1; // Failsafe to minimum 1 min
                   app.startExam(totalMins);
                   Navigator.pop(ctx);
                 },
@@ -1348,7 +1495,8 @@ class ResultScreen extends StatelessWidget {
                 width: double.infinity, height: 55,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), 
-                  onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ReviewScreen(app: app))), 
+                  // FIX: Changed from pushReplacement to push so back button drops here
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReviewScreen(app: app))), 
                   child: const Text("REVIEW TOPICS", style: TextStyle(fontWeight: FontWeight.bold))
                 )
               ),
@@ -1384,7 +1532,7 @@ class ReviewScreen extends StatelessWidget {
               height: 50,
               child: Row(
                 children:[
-                  IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+                  IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), // Returns to ResultScreen smoothly
                   const Text("TOPIC BREAKDOWN", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 ],
               )
@@ -1404,7 +1552,6 @@ class ReviewScreen extends StatelessWidget {
                   Color color = pct >= 80 ? const Color(0xFF10B981) : (pct >= 50 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
                   IconData icon = pct >= 80 ? Icons.check_circle : (pct >= 50 ? Icons.error : Icons.cancel);
 
-                  // NEW: Wrap in InkWell to route to Detailed Screen
                   return Material(
                     color: Colors.transparent,
                     child: InkWell(
@@ -1419,7 +1566,7 @@ class ReviewScreen extends StatelessWidget {
                           Expanded(child: Text(topic, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
                           Text("$pct%", style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
                           const SizedBox(width: 10),
-                          Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)), // Drill-down hint
+                          Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)), 
                         ]),
                       ),
                     ),
@@ -1434,7 +1581,6 @@ class ReviewScreen extends StatelessWidget {
   }
 }
 
-// --- NEW: DETAILED REVIEW DRILL-DOWN SCREEN ---
 class DetailedReviewScreen extends StatelessWidget {
   final AppState app;
   final String topic;
@@ -1442,14 +1588,12 @@ class DetailedReviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Filter questions that were in the exam AND belong to this specific topic
     List<QuestionModel> topicQuestions = app.filteredDB.where((q) => q.topic == topic).toList();
 
     return Scaffold(
       body: SafeArea(
         child: Column(
           children:[
-            // Header
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outline))),
@@ -1462,8 +1606,6 @@ class DetailedReviewScreen extends StatelessWidget {
                 ],
               )
             ),
-            
-            // List of locked, graded question cards
             Expanded(
               child: ListView.builder(
                 physics: const BouncingScrollPhysics(),
@@ -1479,7 +1621,6 @@ class DetailedReviewScreen extends StatelessWidget {
   }
 }
 
-// Special locked-down card that visually grades options
 class _ReviewQuestionCard extends StatelessWidget {
   final QuestionModel q;
   final AppState app;
@@ -1493,18 +1634,14 @@ class _ReviewQuestionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children:[
-          // Badges
           Row(children:[
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(6)), child: Text(q.topic, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(6)), child: Text(q.year, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold))),
           ]),
           const SizedBox(height: 15),
-          
           Text(q.stem, style: const TextStyle(fontSize: 17, height: 1.4, fontWeight: FontWeight.bold)),
           const SizedBox(height: 15),
-          
-          // Loads graded roots
           ...q.roots.map((r) => _ReviewRootWidget(r: r, app: app)),
         ],
       ),
@@ -1512,7 +1649,6 @@ class _ReviewQuestionCard extends StatelessWidget {
   }
 }
 
-// Special graded root option widget
 class _ReviewRootWidget extends StatelessWidget {
   final RootItem r;
   final AppState app;
@@ -1524,32 +1660,27 @@ class _ReviewRootWidget extends StatelessWidget {
     String actualAns = r.answer;
     bool showExp = app.explanationRevealed[r.id] ?? false;
 
-    // Visual Grades Math
     bool isCorrect = userAns == actualAns;
     bool isUnanswered = userAns == "";
 
-    // Colors
     Color dotBg = Colors.transparent;
     Color dotBorder = Theme.of(context).colorScheme.outline;
     Color dotTextColor = Theme.of(context).colorScheme.onSurface;
-    String dotText = actualAns; // Always show correct answer inside dot for learning
+    String dotText = actualAns; 
     
-    // Status Badge setup
     Color badgeColor = Colors.transparent;
     Color badgeTextColor = Colors.white;
     String badgeText = "";
     IconData? badgeIcon;
 
     if (isUnanswered) {
-      // Skipped / Unanswered
       dotBorder = Colors.grey; 
       dotTextColor = Colors.grey;
       badgeColor = Colors.grey.shade600;
       badgeText = "UNANSWERED";
       badgeIcon = Icons.remove;
     } else if (isCorrect) {
-      // Correct
-      dotBg = const Color(0xFF10B981); // Green
+      dotBg = const Color(0xFF10B981); 
       dotBorder = dotBg;
       dotTextColor = Colors.white;
       badgeColor = const Color(0xFF10B981).withValues(alpha: 0.2);
@@ -1557,8 +1688,7 @@ class _ReviewRootWidget extends StatelessWidget {
       badgeText = "CORRECT";
       badgeIcon = Icons.check;
     } else {
-      // Wrong
-      dotBg = const Color(0xFFEF4444); // Red
+      dotBg = const Color(0xFFEF4444); 
       dotBorder = dotBg;
       dotTextColor = Colors.white;
       badgeColor = const Color(0xFFEF4444).withValues(alpha: 0.2);
@@ -1575,25 +1705,21 @@ class _ReviewRootWidget extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children:[
-              // Non-clickable dot showing the CORRECT answer
               Container(
                 width: 34, height: 34, alignment: Alignment.center, 
                 decoration: BoxDecoration(color: dotBg, shape: BoxShape.circle, border: Border.all(color: dotBorder, width: 1.5)), 
                 child: Text(dotText, style: TextStyle(fontWeight: FontWeight.bold, color: dotTextColor, fontSize: 14))
               ),
               const SizedBox(width: 15),
-              
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children:[
-                    // Text
                     GestureDetector(
-                      onTap: () => app.toggleExplanation(r.id), // Let them tap text to see explanation
+                      onTap: () => app.toggleExplanation(r.id), 
                       child: Text(r.text, style: const TextStyle(fontSize: 15, height: 1.3))
                     ),
                     const SizedBox(height: 6),
-                    // Feedback Badge
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(color: badgeColor, borderRadius: BorderRadius.circular(4)),
@@ -1612,8 +1738,6 @@ class _ReviewRootWidget extends StatelessWidget {
             ],
           ),
         ),
-        
-        // Animated dropdown section for explanations
         AnimatedSize(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutQuad,
