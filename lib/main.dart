@@ -8,7 +8,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,8 +26,7 @@ import 'firebase_options.dart';
 // ----------------------------------------------------------------------------
 // 1. CONSTANTS & KEYS
 // ----------------------------------------------------------------------------
-const String csvUrl =
-    "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
+const String csvUrl = "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
 const String themeKey = "synapse_theme_mode";
 const String colorIndexKey = "synapse_color_index";
 const String soundPrefKey = "synapse_sound_pref";
@@ -80,13 +78,10 @@ class RootItem {
   final String info;
 
   RootItem(
-      {required this.id,
-      required this.text,
-      required this.answer,
-      required this.info});
+      {required this.id, required this.text, required this.answer, required this.info});
 
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'text': text, 'answer': answer, 'info': info};
+  Map<String, dynamic> toJson() => {'id': id, 'text': text, 'answer': answer, 'info': info};
+
   factory RootItem.fromJson(Map<String, dynamic> json) => RootItem(
         id: json['id'] ?? '',
         text: json['text'] ?? '',
@@ -124,9 +119,9 @@ class QuestionModel {
   factory QuestionModel.fromJson(Map<String, dynamic> json) => QuestionModel(
         id: json['id'] ?? '',
         subject: json['subject'] ?? '',
-        topic: json['topic'] ?? '',
-        year: json['year'] ?? '',
-        stem: json['stem'] ?? '',
+        topic: json['topic'] ?? "Uncategorized",
+        year: json['year'] ?? "",
+        stem: json['stem'] ?? "",
         roots: (json['roots'] as List?)
                 ?.map((r) => RootItem.fromJson(r))
                 .toList() ??
@@ -142,13 +137,11 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
   try {
     String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '');
     cleanCsv = cleanCsv.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-
     List<List<dynamic>> rows = const CsvToListConverter(eol: '\n')
         .convert(cleanCsv, shouldParseNumbers: false);
 
     if (rows.isNotEmpty) {
-      List<String> headers =
-          rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
+      List<String> headers = rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
 
       for (int r = 1; r < rows.length; r++) {
         var row = rows[r];
@@ -160,9 +153,9 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
         if (!dict.containsKey('id') || dict['id']!.isEmpty) {
           continue;
         }
+
         String qId = dict['id']!;
         List<RootItem> roots = [];
-
         for (int i = 1; i <= 5; i++) {
           String text = dict['r${i}_text'] ?? "";
           if (text.isNotEmpty) {
@@ -227,18 +220,14 @@ class AppState extends ChangeNotifier {
   String surname = "";
   String email = "";
   bool hasSeenWelcome = false;
-
   String errorMessage = "";
 
   List<QuestionModel> fullDB = [];
   List<QuestionModel> filteredDB = [];
-
   String searchText = "";
   List<String> activeTopics = [];
   List<String> allTopics = [];
-
   Map<String, List<String>> activeTopicYears = {};
-
   int currentPage = 1;
   int itemsPerPage = 5;
   int get totalPages => (filteredDB.length / itemsPerPage).ceil();
@@ -247,7 +236,6 @@ class AppState extends ChangeNotifier {
   Map<String, String> userAnswers = {};
   Map<String, bool> studyRevealed = {};
   Map<String, bool> explanationRevealed = {};
-
   Timer? _timer;
   int timeLeftSeconds = 0;
   int finalScore = 0;
@@ -258,7 +246,6 @@ class AppState extends ChangeNotifier {
     const Color(0xFF14B8A6),
     const Color(0xFF8B5CF6),
   ];
-
   Color get currentPrimaryColor => availableColors[themeColorIndex];
 
   AppState() {
@@ -267,7 +254,6 @@ class AppState extends ChangeNotifier {
 
   Future<void> initData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
-
     isDarkMode = prefs.getBool(themeKey) ?? true;
     themeColorIndex = prefs.getInt(colorIndexKey) ?? 0;
     soundEnabled = prefs.getBool(soundPrefKey) ?? true;
@@ -304,7 +290,6 @@ class AppState extends ChangeNotifier {
   Future<void> registerToken(String token) async {
     try {
       errorMessage = "";
-
       // 1. Check Firestore for the Token
       DocumentSnapshot tokenDoc = await FirebaseFirestore.instance
           .collection('tokens')
@@ -325,8 +310,7 @@ class AppState extends ChangeNotifier {
       if (isUsed) {
         String boundDevice = data['boundDeviceId'] ?? "";
         if (boundDevice != deviceId) {
-          errorMessage =
-              "Security Alert: Token already bound to another device.";
+          errorMessage = "Security Alert: Token already bound to another device.";
           notifyListeners();
           return;
         }
@@ -365,8 +349,7 @@ class AppState extends ChangeNotifier {
       String newUniqueId = "${fName.trim().toUpperCase()}-$randomStr";
 
       // Create User in Firebase Auth (Using their secure token as their password behind the scenes)
-      UserCredential userCred =
-          await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      UserCredential userCred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: mail,
         password: userToken,
       );
@@ -410,7 +393,10 @@ class AppState extends ChangeNotifier {
       await prefs.setString(emailKey, email);
       await prefs.setString(uniqueIdKey, uniqueId);
       await prefs.setBool(isLoggedInKey, true);
-      notifyListeners();
+
+      // notifyListeners(); // Don't call this here yet, it will re-render main screen which is good, but user wants it to show loading screen and do caching.
+      // Instead, call reloadData(). This will set isLoading=true, notify, then reload everything.
+      await reloadData();
     } catch (e) {
       if (e is FirebaseAuthException && e.code == 'email-already-in-use') {
         errorMessage = "Email is already registered. Please contact admin.";
@@ -418,8 +404,14 @@ class AppState extends ChangeNotifier {
         errorMessage = "Failed to create profile. Check your connection.";
       }
       notifyListeners();
-      rethrow;
+      // rethrow; // REMOVE THIS!
     }
+  }
+
+  Future<void> reloadData() async {
+    isLoading = true;
+    notifyListeners();
+    await initData();
   }
 
   void markWelcomeSeen() async {
@@ -450,7 +442,6 @@ class AppState extends ChangeNotifier {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$cacheFileName');
-
       if (await file.exists()) {
         String jsonStr = await file.readAsString();
         if (jsonStr.isNotEmpty) {
@@ -470,9 +461,9 @@ class AppState extends ChangeNotifier {
       final response = await http
           .get(Uri.parse(csvUrl))
           .timeout(const Duration(seconds: 30));
+
       if (response.statusCode == 200) {
-        List<QuestionModel> parsed =
-            await compute(_decodeCsvInBackground, response.body);
+        List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
         if (parsed.isNotEmpty) {
           errorMessage = "";
           if (parsed.length != fullDB.length || fullDB.isEmpty) {
@@ -480,21 +471,19 @@ class AppState extends ChangeNotifier {
             _setupData();
             final directory = await getApplicationDocumentsDirectory();
             final file = File('${directory.path}/$cacheFileName');
-            String newCacheStr =
-                await compute(_encodeJsonCacheInBackground, fullDB);
+            String newCacheStr = await compute(_encodeJsonCacheInBackground, fullDB);
             await file.writeAsString(newCacheStr, flush: true);
           }
         } else {
-          errorMessage =
-              "CSV fetched but 0 questions parsed. Check column headers.";
+          errorMessage = "CSV fetched but 0 questions parsed. Check column headers.";
         }
       } else {
-        errorMessage =
-            "Network Error ${response.statusCode}: Failed to fetch GitHub CSV.";
+        errorMessage = "Network Error ${response.statusCode}: Failed to fetch GitHub CSV.";
       }
     } catch (e) {
-      if (fullDB.isEmpty)
-        { errorMessage = "Connection failed. Please check internet."; }
+      if (fullDB.isEmpty) {
+        errorMessage = "Connection failed. Please check internet.";
+      }
     } finally {
       isLoading = false;
       notifyListeners();
@@ -578,7 +567,6 @@ class AppState extends ChangeNotifier {
       }
       return topicMatch && searchMatch;
     }).toList();
-
     currentPage = 1;
     notifyListeners();
   }
@@ -623,7 +611,6 @@ class AppState extends ChangeNotifier {
     timeLeftSeconds = minutes * 60;
     currentPage = 1;
     applyFilters();
-
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (timeLeftSeconds > 0) {
@@ -647,12 +634,10 @@ class AppState extends ChangeNotifier {
       }
       for (var r in q.roots) {
         total++;
-        topicPerformance[q.topic]!['total'] =
-            (topicPerformance[q.topic]!['total'] ?? 0) + 1;
+        topicPerformance[q.topic]!['total'] = (topicPerformance[q.topic]!['total'] ?? 0) + 1;
         if (userAnswers[r.id] == r.answer) {
           correct++;
-          topicPerformance[q.topic]!['correct'] =
-              (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
+          topicPerformance[q.topic]!['correct'] = (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
         }
       }
     }
@@ -712,6 +697,7 @@ class AppState extends ChangeNotifier {
 // ----------------------------------------------------------------------------
 class SynapseApp extends StatefulWidget {
   const SynapseApp({super.key});
+
   @override
   State<SynapseApp> createState() => _SynapseAppState();
 }
@@ -735,8 +721,7 @@ class _SynapseAppState extends State<SynapseApp> {
     return ThemeData(
       useMaterial3: true,
       brightness: isDark ? Brightness.dark : Brightness.light,
-      scaffoldBackgroundColor:
-          isDark ? const Color(0xFF000000) : const Color(0xFFF3F4F6),
+      scaffoldBackgroundColor: isDark ? const Color(0xFF000000) : const Color(0xFFF3F4F6),
       colorScheme: isDark
           ? ColorScheme.dark(
               primary: primary,
@@ -780,10 +765,10 @@ class _SynapseAppState extends State<SynapseApp> {
 // ----------------------------------------------------------------------------
 // 6. AUTHENTICATION & ONBOARDING SCREENS
 // ----------------------------------------------------------------------------
-
 class TokenScreen extends StatefulWidget {
   final AppState app;
   const TokenScreen({super.key, required this.app});
+
   @override
   State<TokenScreen> createState() => _TokenScreenState();
 }
@@ -796,8 +781,7 @@ class _TokenScreenState extends State<TokenScreen> {
   void _verifyToken() async {
     String token = _tokenController.text.trim().toUpperCase();
     if (token.length != 17 || !RegExp(r'^[A-Z0-9]+$').hasMatch(token)) {
-      setState(() =>
-          _errorMsg = "Invalid format. Must be 17 alphanumeric characters.");
+      setState(() => _errorMsg = "Invalid format. Must be 17 alphanumeric characters.");
       return;
     }
     setState(() {
@@ -829,8 +813,7 @@ class _TokenScreenState extends State<TokenScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.lock_outline,
-                    size: 80, color: Theme.of(context).colorScheme.primary),
+                Icon(Icons.lock_outline, size: 80, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(height: 20),
                 Text("Device Verification",
                     style: TextStyle(
@@ -854,9 +837,7 @@ class _TokenScreenState extends State<TokenScreen> {
                     FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]'))
                   ],
                   style: const TextStyle(
-                      fontSize: 20,
-                      letterSpacing: 2,
-                      fontWeight: FontWeight.bold),
+                      fontSize: 20, letterSpacing: 2, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                   decoration: InputDecoration(
                     counterText: "",
@@ -880,8 +861,7 @@ class _TokenScreenState extends State<TokenScreen> {
                     focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(15),
                         borderSide: BorderSide(
-                            color: Theme.of(context).colorScheme.primary,
-                            width: 2)),
+                            color: Theme.of(context).colorScheme.primary, width: 2)),
                     errorText: _errorMsg,
                   ),
                 ),
@@ -906,9 +886,7 @@ class _TokenScreenState extends State<TokenScreen> {
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: widget.app.isDarkMode
-                                    ? Colors.black
-                                    : Colors.white)),
+                                color: widget.app.isDarkMode ? Colors.black : Colors.white)),
                   ),
                 )
               ],
@@ -923,6 +901,7 @@ class _TokenScreenState extends State<TokenScreen> {
 class RegistrationScreen extends StatefulWidget {
   final AppState app;
   const RegistrationScreen({super.key, required this.app});
+
   @override
   State<RegistrationScreen> createState() => _RegistrationScreenState();
 }
@@ -943,19 +922,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     }
     setState(() => _isLoading = true);
 
-    try {
-      // Call Live Firebase Action
-      await widget.app.saveUserProfile(_firstController.text.trim(),
-          _surController.text.trim(), _emailController.text.trim());
-      if (!mounted) {
-        return;
-      }
-      if (widget.app.errorMessage.isNotEmpty) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(widget.app.errorMessage)));
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
+    // Call Live Firebase Action
+    await widget.app.saveUserProfile(_firstController.text.trim(), _surController.text.trim(), _emailController.text.trim());
+
+    if (!mounted) {
+      return;
+    }
+
+    if (widget.app.errorMessage.isNotEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(widget.app.errorMessage)));
+      setState(() => _isLoading = false);
+    } else {
       setState(() => _isLoading = false);
     }
   }
@@ -1013,9 +991,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: widget.app.isDarkMode
-                                    ? Colors.black
-                                    : Colors.white)),
+                                color: widget.app.isDarkMode ? Colors.black : Colors.white)),
                   ),
                 )
               ],
@@ -1034,18 +1010,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       decoration: InputDecoration(
         labelText: label,
         labelStyle: TextStyle(
-            color:
-                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
         filled: true,
         fillColor: Theme.of(context).colorScheme.surface,
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide:
-                BorderSide(color: Theme.of(context).colorScheme.outline)),
+            borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
         enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide:
-                BorderSide(color: Theme.of(context).colorScheme.outline)),
+            borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
         focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(
@@ -1057,6 +1030,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
 class SplashLoaderScreen extends StatelessWidget {
   const SplashLoaderScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1091,6 +1065,7 @@ class SplashLoaderScreen extends StatelessWidget {
 class BouncingDots extends StatefulWidget {
   final Color color;
   const BouncingDots({super.key, required this.color});
+
   @override
   State<BouncingDots> createState() => _BouncingDotsState();
 }
@@ -1098,6 +1073,7 @@ class BouncingDots extends StatefulWidget {
 class _BouncingDotsState extends State<BouncingDots>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
+
   @override
   void initState() {
     super.initState();
@@ -1120,14 +1096,12 @@ class _BouncingDotsState extends State<BouncingDots>
         double phase = (_controller.value - delay) % 1.0;
         if (phase < 0) phase += 1.0;
         if (phase < 0.5) offset = -math.sin(phase * 2 * math.pi) * 15;
-
         return Transform.translate(
           offset: Offset(0, offset),
           child: Container(
             width: 18,
             height: 18,
-            decoration:
-                BoxDecoration(color: widget.color, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
           ),
         );
       },
@@ -1214,6 +1188,7 @@ class OnboardingScreen extends StatelessWidget {
 class MainScreen extends StatefulWidget {
   final AppState app;
   const MainScreen({super.key, required this.app});
+
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
@@ -1256,15 +1231,13 @@ class _MainScreenState extends State<MainScreen> {
         builder: (ctx) {
           return StatefulBuilder(
               builder: (BuildContext context, StateSetter setModalState) {
-            List<String> currentSelectedYears =
-                app.activeTopicYears[topic] ?? [];
+            List<String> currentSelectedYears = app.activeTopicYears[topic] ?? [];
             bool isAllYears = currentSelectedYears.isEmpty;
 
             return Container(
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1294,8 +1267,7 @@ class _MainScreenState extends State<MainScreen> {
                         physics: const BouncingScrollPhysics(),
                         children: [
                           CheckboxListTile(
-                            checkColor:
-                                app.isDarkMode ? Colors.black : Colors.white,
+                            checkColor: app.isDarkMode ? Colors.black : Colors.white,
                             title: Text("All Years",
                                 style: TextStyle(
                                     fontWeight: isAllYears
@@ -1311,11 +1283,9 @@ class _MainScreenState extends State<MainScreen> {
                           ),
                           const Divider(height: 1),
                           ...availableYears.map((year) {
-                            bool isSelected =
-                                currentSelectedYears.contains(year);
+                            bool isSelected = currentSelectedYears.contains(year);
                             return CheckboxListTile(
-                              checkColor:
-                                  app.isDarkMode ? Colors.black : Colors.white,
+                              checkColor: app.isDarkMode ? Colors.black : Colors.white,
                               title: Text(year,
                                   style: TextStyle(
                                       fontWeight: isSelected
@@ -1427,8 +1397,7 @@ class _MainScreenState extends State<MainScreen> {
                                   Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                          builder: (_) =>
-                                              ResultScreen(app: app)));
+                                          builder: (_) => ResultScreen(app: app)));
                                 },
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1474,13 +1443,11 @@ class _MainScreenState extends State<MainScreen> {
                           border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(22.5),
                               borderSide: BorderSide(
-                                  color:
-                                      Theme.of(context).colorScheme.outline)),
+                                  color: Theme.of(context).colorScheme.outline)),
                           enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(22.5),
                               borderSide: BorderSide(
-                                  color:
-                                      Theme.of(context).colorScheme.outline)),
+                                  color: Theme.of(context).colorScheme.outline)),
                           focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(22.5),
                               borderSide: BorderSide(
@@ -1524,8 +1491,7 @@ class _MainScreenState extends State<MainScreen> {
                               style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color:
-                                      Theme.of(context).colorScheme.primary)),
+                                  color: Theme.of(context).colorScheme.primary)),
                           const SizedBox(height: 4),
                           Text(
                               "Ready to crush your medical boards today? Select your topics to begin.",
@@ -1556,12 +1522,10 @@ class _MainScreenState extends State<MainScreen> {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
                   children: app.activeTopics.map((t) {
                     List<String> selectedYears = app.activeTopicYears[t] ?? [];
                     bool isYearFiltered = selectedYears.isNotEmpty;
-
                     String yearDisplay = isYearFiltered
                         ? (selectedYears.length == 1
                             ? selectedYears.first
@@ -1663,8 +1627,9 @@ class _MainScreenState extends State<MainScreen> {
                         padding: const EdgeInsets.all(15),
                         itemCount: pageItems.length,
                         itemBuilder: (ctx, i) => Padding(
-                            padding: const EdgeInsets.only(bottom: 20),
-                            child: QuestionCard(q: pageItems[i], app: app)),
+                          padding: const EdgeInsets.only(bottom: 20),
+                          child: QuestionCard(q: pageItems[i], app: app),
+                        ),
                       ),
                     ),
             ),
@@ -1747,8 +1712,7 @@ class _MainScreenState extends State<MainScreen> {
       child: Column(
         children: [
           Container(
-            padding:
-                const EdgeInsets.only(top: 55, left: 24, bottom: 24, right: 24),
+            padding: const EdgeInsets.only(top: 55, left: 24, bottom: 24, right: 24),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -1786,8 +1750,7 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 const SizedBox(height: 5),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                       color: Theme.of(context)
                           .colorScheme
@@ -1810,8 +1773,7 @@ class _MainScreenState extends State<MainScreen> {
                               const SnackBar(content: Text("ID Copied!")));
                         },
                         child: Icon(Icons.copy,
-                            size: 14,
-                            color: Theme.of(context).colorScheme.primary),
+                            size: 14, color: Theme.of(context).colorScheme.primary),
                       )
                     ],
                   ),
@@ -1831,7 +1793,8 @@ class _MainScreenState extends State<MainScreen> {
                   Navigator.pop(context);
                 }),
                 _buildDrawerItem(context,
-                    icon: Icons.timer_rounded, title: "Exam Mode", onTap: () {
+                    icon: Icons.timer_rounded,
+                    title: "Exam Mode", onTap: () {
                   Navigator.pop(context);
                   _showExamTimeDialog(context, app);
                 }),
@@ -1855,8 +1818,7 @@ class _MainScreenState extends State<MainScreen> {
                               .withValues(alpha: 0.5))),
                 ),
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(children: [
                     const Expanded(
                         child: Text("Theme Color",
@@ -1875,16 +1837,15 @@ class _MainScreenState extends State<MainScreen> {
                             shape: BoxShape.circle,
                             border: isSelected
                                 ? Border.all(
-                                    color:
-                                        Theme.of(context).colorScheme.onSurface,
+                                    color: Theme.of(context).colorScheme.onSurface,
                                     width: 2)
                                 : null,
                           ),
                           child: isSelected
-                              ? const Icon(Icons.check,
-                                  size: 16, color: Colors.white)
+                              ? const Icon(Icons.check, size: 16, color: Colors.white)
                               : null,
                         ),
+                      
                       );
                     }),
                   ]),
@@ -1892,8 +1853,7 @@ class _MainScreenState extends State<MainScreen> {
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   title: const Text("Dark Mode",
-                      style:
-                          TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   trailing: Switch(
                     value: app.isDarkMode,
                     onChanged: (val) => app.toggleThemeMode(),
@@ -1914,8 +1874,7 @@ class _MainScreenState extends State<MainScreen> {
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   title: const Text("Scroll Ticks",
-                      style:
-                          TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   subtitle: Text("Mechanical wheel sounds",
                       style: TextStyle(
                           fontSize: 11,
@@ -1982,8 +1941,8 @@ class _MainScreenState extends State<MainScreen> {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
-      title: Text(title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+      title:
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
       subtitle: subtitle != null
           ? Text(subtitle,
               style: TextStyle(
@@ -2131,20 +2090,20 @@ class _MainScreenState extends State<MainScreen> {
                                     childDelegate: ListWheelChildBuilderDelegate(
                                         childCount: 13,
                                         builder: (ctx, i) => Center(
-                                            child: Text("$i".padLeft(2, '0'),
-                                                style: TextStyle(
-                                                    fontSize: 22,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: selectedHour == i
-                                                        ? Theme.of(context)
-                                                            .colorScheme
-                                                            .primary
-                                                        : Theme.of(context)
-                                                            .colorScheme
-                                                            .onSurface
-                                                            .withValues(
-                                                                alpha:
-                                                                    0.4)))))),
+                                                child: Text(
+                                                    "$i".padLeft(2, '0'),
+                                                    style: TextStyle(
+                                                        fontSize: 22,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: selectedHour == i
+                                                            ? Theme.of(context)
+                                                                .colorScheme
+                                                                .primary
+                                                            : Theme.of(context)
+                                                                .colorScheme
+                                                                .onSurface
+                                                                .withValues(
+                                                                    alpha: 0.4)))))),
                               ),
                             ],
                           ),
@@ -2170,31 +2129,27 @@ class _MainScreenState extends State<MainScreen> {
                                       app.playScrollSound();
                                       setState(() => selectedMin = v);
                                     },
-                                    childDelegate:
-                                        ListWheelChildBuilderDelegate(
-                                            childCount: 60,
-                                            builder: (ctx, val) {
-                                              return Center(
-                                                  child: Text(
-                                                      "$val".padLeft(2, '0'),
-                                                      style: TextStyle(
-                                                          fontSize: 22,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          color: selectedMin ==
-                                                                  val
-                                                              ? Theme.of(
-                                                                      context)
-                                                                  .colorScheme
-                                                                  .primary
-                                                              : Theme.of(
-                                                                      context)
-                                                                  .colorScheme
-                                                                  .onSurface
-                                                                  .withValues(
-                                                                      alpha:
-                                                                          0.4))));
-                                            })),
+                                    childDelegate: ListWheelChildBuilderDelegate(
+                                        childCount: 60,
+                                        builder: (ctx, val) {
+                                          return Center(
+                                              child: Text(
+                                                  "$val".padLeft(2, '0'),
+                                                  style: TextStyle(
+                                                      fontSize: 22,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: selectedMin == val
+                                                          ? Theme.of(
+                                                                  context)
+                                                              .colorScheme
+                                                              .primary
+                                                          : Theme.of(
+                                                                  context)
+                                                              .colorScheme
+                                                              .onSurface
+                                                              .withValues(
+                                                                  alpha: 0.4))));
+                                        })),
                               ),
                             ],
                           ),
@@ -2239,8 +2194,7 @@ class QuestionCard extends StatelessWidget {
         children: [
           Row(children: [
             Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.outline,
                     borderRadius: BorderRadius.circular(6)),
@@ -2249,8 +2203,7 @@ class QuestionCard extends StatelessWidget {
                         fontSize: 11, fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),
             Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primary,
                     borderRadius: BorderRadius.circular(6)),
@@ -2279,9 +2232,7 @@ class QuestionCard extends StatelessWidget {
                           color: Theme.of(context).colorScheme.outline),
                       borderRadius: BorderRadius.circular(8)),
                   child: Text(
-                      app.isQuestionRevealed(q.id)
-                          ? "HIDE ANSWERS"
-                          : "SHOW ANSWERS",
+                      app.isQuestionRevealed(q.id) ? "HIDE ANSWERS" : "SHOW ANSWERS",
                       style: TextStyle(
                           color: Theme.of(context)
                               .colorScheme
@@ -2316,15 +2267,13 @@ class _RootWidget extends StatelessWidget {
     if (app.isExamMode) {
       if (userAns == "T" || userAns == "F") {
         dotText = userAns;
-        dotBg =
-            userAns == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
+        dotBg = userAns == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
         dotBorder = dotBg;
         dotTextColor = Colors.white;
       }
     } else if (isRevealed) {
       dotText = r.answer;
-      dotBg =
-          r.answer == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
+      dotBg = r.answer == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
       dotBorder = dotBg;
       dotTextColor = Colors.white;
     }
@@ -2356,10 +2305,11 @@ class _RootWidget extends StatelessWidget {
               ),
               const SizedBox(width: 15),
               Expanded(
-                  child: GestureDetector(
-                      onTap: () => app.toggleExplanation(r.id),
-                      child: Text(r.text,
-                          style: const TextStyle(fontSize: 15, height: 1.3)))),
+                child: GestureDetector(
+                    onTap: () => app.toggleExplanation(r.id),
+                    child: Text(r.text,
+                        style: const TextStyle(fontSize: 15, height: 1.3))),
+              ),
             ],
           ),
         ),
@@ -2403,8 +2353,8 @@ class ResultScreen extends StatelessWidget {
               const SizedBox(
                   height: 50,
                   child: Text("CLINICAL EVALUATION",
-                      style: TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold))),
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
               SizedBox(
                 height: 220,
                 child: Stack(alignment: Alignment.center, children: [
@@ -2414,16 +2364,16 @@ class ResultScreen extends StatelessWidget {
                       curve: Curves.easeOutCubic,
                       builder: (context, value, child) {
                         return SizedBox(
-                            width: 150,
-                            height: 150,
-                            child: CircularProgressIndicator(
-                                value: value,
-                                strokeWidth: 14,
-                                backgroundColor:
-                                    Theme.of(context).colorScheme.outline,
-                                color: passed
-                                    ? const Color(0xFF10B981)
-                                    : const Color(0xFFEF4444)));
+                          width: 150,
+                          height: 150,
+                          child: CircularProgressIndicator(
+                              value: value,
+                              strokeWidth: 14,
+                              backgroundColor: Theme.of(context).colorScheme.outline,
+                              color: passed
+                                  ? const Color(0xFF10B981)
+                                  : const Color(0xFFEF4444)),
+                        );
                       }),
                   Text("${app.finalScore}%",
                       style: const TextStyle(
@@ -2445,38 +2395,38 @@ class ResultScreen extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.bold))),
               const Spacer(),
               SizedBox(
-                  width: double.infinity,
-                  height: 55,
-                  child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF10B981),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10))),
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => ReviewScreen(app: app))),
-                      child: const Text("REVIEW TOPICS",
-                          style: TextStyle(fontWeight: FontWeight.bold)))),
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF10B981),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10))),
+                    onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => ReviewScreen(app: app))),
+                    child: const Text("REVIEW TOPICS",
+                        style: TextStyle(fontWeight: FontWeight.bold))),
+              ),
               const SizedBox(height: 20),
               SizedBox(
-                  width: double.infinity,
-                  height: 55,
-                  child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              Theme.of(context).colorScheme.onSurface,
-                          foregroundColor:
-                              Theme.of(context).colorScheme.surface,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10))),
-                      onPressed: () {
-                        app.exitExamMode();
-                        Navigator.pop(context);
-                      },
-                      child: const Text("RETURN TO STUDY",
-                          style: TextStyle(fontWeight: FontWeight.bold)))),
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).colorScheme.onSurface,
+                        foregroundColor: Theme.of(context).colorScheme.surface,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10))),
+                    onPressed: () {
+                      app.exitExamMode();
+                      Navigator.pop(context);
+                    },
+                    child: const Text("RETURN TO STUDY",
+                        style: TextStyle(fontWeight: FontWeight.bold))),
+              ),
             ],
           ),
         ),
@@ -2593,7 +2543,6 @@ class DetailedReviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     List<QuestionModel> topicQuestions =
         app.filteredDB.where((q) => q.topic == topic).toList();
-
     return Scaffold(
         body: SafeArea(
       child: Column(
@@ -2629,8 +2578,9 @@ class DetailedReviewScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(15),
                 itemCount: topicQuestions.length,
                 itemBuilder: (ctx, i) => Padding(
-                    padding: const EdgeInsets.only(bottom: 20),
-                    child: _ReviewQuestionCard(q: topicQuestions[i], app: app)),
+                  padding: const EdgeInsets.only(bottom: 20),
+                  child: _ReviewQuestionCard(q: topicQuestions[i], app: app),
+                ),
               ),
             ),
           ),
@@ -2658,8 +2608,7 @@ class _ReviewQuestionCard extends StatelessWidget {
         children: [
           Row(children: [
             Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.outline,
                     borderRadius: BorderRadius.circular(6)),
@@ -2668,8 +2617,7 @@ class _ReviewQuestionCard extends StatelessWidget {
                         fontSize: 11, fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),
             Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primary,
                     borderRadius: BorderRadius.circular(6)),
@@ -2762,20 +2710,19 @@ class _ReviewRootWidget extends StatelessWidget {
                           fontSize: 14))),
               const SizedBox(width: 15),
               Expanded(
-                  child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GestureDetector(
-                      onTap: () => app.toggleExplanation(r.id),
-                      child: Text(r.text,
-                          style: const TextStyle(fontSize: 15, height: 1.3))),
-                  const SizedBox(height: 6),
-                  Container(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                        onTap: () => app.toggleExplanation(r.id),
+                        child: Text(r.text,
+                            style: const TextStyle(fontSize: 15, height: 1.3))),
+                    const SizedBox(height: 6),
+                    Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                          color: badgeColor,
-                          borderRadius: BorderRadius.circular(4)),
+                          color: badgeColor, borderRadius: BorderRadius.circular(4)),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -2787,9 +2734,11 @@ class _ReviewRootWidget extends StatelessWidget {
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold)),
                         ],
-                      ))
-                ],
-              )),
+                      ),
+                    )
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -2798,8 +2747,7 @@ class _ReviewRootWidget extends StatelessWidget {
           curve: Curves.easeOutQuad,
           child: showExp
               ? Container(
-                  margin:
-                      const EdgeInsets.only(left: 49, bottom: 10, right: 10),
+                  margin: const EdgeInsets.only(left: 49, bottom: 10, right: 10),
                   child: Text(r.info,
                       style: TextStyle(
                           color: Theme.of(context)
