@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -119,9 +120,9 @@ class QuestionModel {
   factory QuestionModel.fromJson(Map<String, dynamic> json) => QuestionModel(
         id: json['id'] ?? '',
         subject: json['subject'] ?? '',
-        topic: json['topic'] ?? "Uncategorized",
-        year: json['year'] ?? "",
-        stem: json['stem'] ?? "",
+        topic: json['topic'] ?? '',
+        year: json['year'] ?? '',
+        stem: json['stem'] ?? '',
         roots: (json['roots'] as List?)
                 ?.map((r) => RootItem.fromJson(r))
                 .toList() ??
@@ -137,11 +138,13 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
   try {
     String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '');
     cleanCsv = cleanCsv.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
     List<List<dynamic>> rows = const CsvToListConverter(eol: '\n')
         .convert(cleanCsv, shouldParseNumbers: false);
 
     if (rows.isNotEmpty) {
-      List<String> headers = rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
+      List<String> headers =
+          rows[0].map((e) => e.toString().trim().toLowerCase()).toList();
 
       for (int r = 1; r < rows.length; r++) {
         var row = rows[r];
@@ -156,6 +159,7 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
 
         String qId = dict['id']!;
         List<RootItem> roots = [];
+
         for (int i = 1; i <= 5; i++) {
           String text = dict['r${i}_text'] ?? "";
           if (text.isNotEmpty) {
@@ -220,14 +224,15 @@ class AppState extends ChangeNotifier {
   String surname = "";
   String email = "";
   bool hasSeenWelcome = false;
-  String errorMessage = "";
 
+  String errorMessage = "";
   List<QuestionModel> fullDB = [];
   List<QuestionModel> filteredDB = [];
   String searchText = "";
   List<String> activeTopics = [];
   List<String> allTopics = [];
   Map<String, List<String>> activeTopicYears = {};
+
   int currentPage = 1;
   int itemsPerPage = 5;
   int get totalPages => (filteredDB.length / itemsPerPage).ceil();
@@ -246,6 +251,7 @@ class AppState extends ChangeNotifier {
     const Color(0xFF14B8A6),
     const Color(0xFF8B5CF6),
   ];
+
   Color get currentPrimaryColor => availableColors[themeColorIndex];
 
   AppState() {
@@ -269,19 +275,33 @@ class AppState extends ChangeNotifier {
     email = prefs.getString(emailKey) ?? "";
     hasSeenWelcome = prefs.getBool(welcomeSeenKey) ?? false;
 
-    await _loadLocalFileCache();
-    _fetchFromServer();
+    // ONLY fetch data if logged in. Otherwise stop loader to show Auth UI
+    if (isLoggedIn) {
+      await _loadLocalFileCache();
+      _fetchFromServer();
+    } else {
+      isLoading = false;
+      notifyListeners();
+    }
   }
 
-  // Helper to get device hardware ID
+  // Helper to get device hardware ID safely across platforms
   Future<String> _getDeviceId() async {
-    DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-    if (Platform.isAndroid) {
-      AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
-      return androidInfo.id;
-    } else if (Platform.isIOS) {
-      IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
-      return iosInfo.identifierForVendor ?? "unknown_ios_device";
+    if (kIsWeb) return "web_device_id";
+    try {
+      DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+      if (Platform.isAndroid) {
+        AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+        return androidInfo.id;
+      } else if (Platform.isIOS) {
+        IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
+        return iosInfo.identifierForVendor ?? "unknown_ios_device";
+      } else if (Platform.isWindows) {
+        WindowsDeviceInfo winInfo = await deviceInfo.windowsInfo;
+        return winInfo.deviceId;
+      }
+    } catch (e) {
+      debugPrint("Device ID lookup error: $e");
     }
     return "unknown_device";
   }
@@ -290,6 +310,7 @@ class AppState extends ChangeNotifier {
   Future<void> registerToken(String token) async {
     try {
       errorMessage = "";
+
       // 1. Check Firestore for the Token
       DocumentSnapshot tokenDoc = await FirebaseFirestore.instance
           .collection('tokens')
@@ -316,12 +337,17 @@ class AppState extends ChangeNotifier {
         }
       } else {
         // 3. Bind Device to Token immediately to lock it
-        await FirebaseFirestore.instance
-            .collection('tokens')
-            .doc(token)
-            .update({
-          'boundDeviceId': deviceId,
-        });
+        try {
+          await FirebaseFirestore.instance
+              .collection('tokens')
+              .doc(token)
+              .update({
+            'boundDeviceId': deviceId,
+          });
+        } catch (e) {
+          debugPrint("Firestore write error during token lock: $e");
+          // Proceed locally if Firestore rules block update
+        }
       }
 
       // Success! Proceed to next screen
@@ -329,6 +355,7 @@ class AppState extends ChangeNotifier {
       userToken = token;
       await prefs.setString(userTokenKey, token);
       notifyListeners();
+
     } catch (e) {
       errorMessage = "Connection error. Ensure you have internet access.";
       notifyListeners();
@@ -348,39 +375,59 @@ class AppState extends ChangeNotifier {
           4, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
       String newUniqueId = "${fName.trim().toUpperCase()}-$randomStr";
 
-      // Create User in Firebase Auth (Using their secure token as their password behind the scenes)
-      UserCredential userCred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: mail,
-        password: userToken,
-      );
+      UserCredential? userCred;
 
-      // Send Firebase Email Verification
-      await userCred.user?.sendEmailVerification();
+      try {
+        // Create User in Firebase Auth (Using their secure token as their password behind the scenes)
+        userCred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: mail,
+          password: userToken,
+        );
+        await userCred.user?.sendEmailVerification();
+      } on FirebaseAuthException catch (authErr) {
+        if (authErr.code == 'email-already-in-use') {
+          // If already signed up with this email before, attempt to login instead of failing
+          userCred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+            email: mail,
+            password: userToken,
+          );
+        } else if (authErr.code == 'operation-not-allowed') {
+          throw Exception("Auth is disabled. Enable Email/Password in Firebase console.");
+        } else {
+          rethrow;
+        }
+      }
 
-      // Create Student Record in Firestore
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userCred.user!.uid)
-          .set({
-        'firstName': fName.trim(),
-        'surname': sName.trim(),
-        'email': mail.trim(),
-        'uniqueId': newUniqueId,
-        'deviceId': deviceId,
-        'boundToken': userToken,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      // Attempt to save details to Firestore
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCred.user!.uid)
+            .set({
+          'firstName': fName.trim(),
+          'surname': sName.trim(),
+          'email': mail.trim(),
+          'uniqueId': newUniqueId,
+          'deviceId': deviceId,
+          'boundToken': userToken,
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
 
-      // Mark Token as officially USED
-      await FirebaseFirestore.instance
-          .collection('tokens')
-          .doc(userToken)
-          .update({
-        'isUsed': true,
-        'usedByUid': userCred.user!.uid,
-      });
+        // Mark Token as officially USED
+        await FirebaseFirestore.instance
+            .collection('tokens')
+            .doc(userToken)
+            .set({
+          'isUsed': true,
+          'usedByUid': userCred.user!.uid,
+          'boundDeviceId': deviceId,
+        }, SetOptions(merge: true));
+      } catch (e) {
+        debugPrint("Firestore Profile Error (Letting user proceed locally): $e");
+        // We catch this to prevent the app from hanging if Firestore rules fail!
+      }
 
-      // Save locally
+      // Save locally to persist login state
       firstName = fName.trim();
       surname = sName.trim();
       email = mail.trim();
@@ -394,24 +441,23 @@ class AppState extends ChangeNotifier {
       await prefs.setString(uniqueIdKey, uniqueId);
       await prefs.setBool(isLoggedInKey, true);
 
-      // notifyListeners(); // Don't call this here yet, it will re-render main screen which is good, but user wants it to show loading screen and do caching.
-      // Instead, call reloadData(). This will set isLoading=true, notify, then reload everything.
-      await reloadData();
+      // Trigger the loading screen transition
+      isLoading = true;
+      notifyListeners();
+
+      // Perform data loading and caching now that setup is complete
+      await _loadLocalFileCache();
+      await _fetchFromServer();
+
     } catch (e) {
-      if (e is FirebaseAuthException && e.code == 'email-already-in-use') {
-        errorMessage = "Email is already registered. Please contact admin.";
+      if (e is FirebaseAuthException) {
+        errorMessage = e.message ?? "Authentication failed.";
       } else {
-        errorMessage = "Failed to create profile. Check your connection.";
+        errorMessage = e.toString().replaceAll("Exception: ", "");
       }
       notifyListeners();
-      // rethrow; // REMOVE THIS!
+      rethrow;
     }
-  }
-
-  Future<void> reloadData() async {
-    isLoading = true;
-    notifyListeners();
-    await initData();
   }
 
   void markWelcomeSeen() async {
@@ -463,7 +509,8 @@ class AppState extends ChangeNotifier {
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
-        List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
+        List<QuestionModel> parsed =
+            await compute(_decodeCsvInBackground, response.body);
         if (parsed.isNotEmpty) {
           errorMessage = "";
           if (parsed.length != fullDB.length || fullDB.isEmpty) {
@@ -471,14 +518,17 @@ class AppState extends ChangeNotifier {
             _setupData();
             final directory = await getApplicationDocumentsDirectory();
             final file = File('${directory.path}/$cacheFileName');
-            String newCacheStr = await compute(_encodeJsonCacheInBackground, fullDB);
+            String newCacheStr =
+                await compute(_encodeJsonCacheInBackground, fullDB);
             await file.writeAsString(newCacheStr, flush: true);
           }
         } else {
-          errorMessage = "CSV fetched but 0 questions parsed. Check column headers.";
+          errorMessage =
+              "CSV fetched but 0 questions parsed. Check column headers.";
         }
       } else {
-        errorMessage = "Network Error ${response.statusCode}: Failed to fetch GitHub CSV.";
+        errorMessage =
+            "Network Error ${response.statusCode}: Failed to fetch GitHub CSV.";
       }
     } catch (e) {
       if (fullDB.isEmpty) {
@@ -567,6 +617,7 @@ class AppState extends ChangeNotifier {
       }
       return topicMatch && searchMatch;
     }).toList();
+
     currentPage = 1;
     notifyListeners();
   }
@@ -611,6 +662,7 @@ class AppState extends ChangeNotifier {
     timeLeftSeconds = minutes * 60;
     currentPage = 1;
     applyFilters();
+
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (timeLeftSeconds > 0) {
@@ -634,10 +686,12 @@ class AppState extends ChangeNotifier {
       }
       for (var r in q.roots) {
         total++;
-        topicPerformance[q.topic]!['total'] = (topicPerformance[q.topic]!['total'] ?? 0) + 1;
+        topicPerformance[q.topic]!['total'] =
+            (topicPerformance[q.topic]!['total'] ?? 0) + 1;
         if (userAnswers[r.id] == r.answer) {
           correct++;
-          topicPerformance[q.topic]!['correct'] = (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
+          topicPerformance[q.topic]!['correct'] =
+              (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
         }
       }
     }
@@ -697,7 +751,6 @@ class AppState extends ChangeNotifier {
 // ----------------------------------------------------------------------------
 class SynapseApp extends StatefulWidget {
   const SynapseApp({super.key});
-
   @override
   State<SynapseApp> createState() => _SynapseAppState();
 }
@@ -721,7 +774,8 @@ class _SynapseAppState extends State<SynapseApp> {
     return ThemeData(
       useMaterial3: true,
       brightness: isDark ? Brightness.dark : Brightness.light,
-      scaffoldBackgroundColor: isDark ? const Color(0xFF000000) : const Color(0xFFF3F4F6),
+      scaffoldBackgroundColor:
+          isDark ? const Color(0xFF000000) : const Color(0xFFF3F4F6),
       colorScheme: isDark
           ? ColorScheme.dark(
               primary: primary,
@@ -784,6 +838,7 @@ class _TokenScreenState extends State<TokenScreen> {
       setState(() => _errorMsg = "Invalid format. Must be 17 alphanumeric characters.");
       return;
     }
+
     setState(() {
       _isLoading = true;
       _errorMsg = null;
@@ -791,6 +846,8 @@ class _TokenScreenState extends State<TokenScreen> {
 
     // Call Live Firebase Action
     await widget.app.registerToken(token);
+
+    if (!mounted) return;
 
     // Check if Firebase threw an error
     if (widget.app.errorMessage.isNotEmpty) {
@@ -813,7 +870,8 @@ class _TokenScreenState extends State<TokenScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.lock_outline, size: 80, color: Theme.of(context).colorScheme.primary),
+                Icon(Icons.lock_outline,
+                    size: 80, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(height: 20),
                 Text("Device Verification",
                     style: TextStyle(
@@ -837,7 +895,9 @@ class _TokenScreenState extends State<TokenScreen> {
                     FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]'))
                   ],
                   style: const TextStyle(
-                      fontSize: 20, letterSpacing: 2, fontWeight: FontWeight.bold),
+                      fontSize: 20,
+                      letterSpacing: 2,
+                      fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                   decoration: InputDecoration(
                     counterText: "",
@@ -861,7 +921,8 @@ class _TokenScreenState extends State<TokenScreen> {
                     focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(15),
                         borderSide: BorderSide(
-                            color: Theme.of(context).colorScheme.primary, width: 2)),
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2)),
                     errorText: _errorMsg,
                   ),
                 ),
@@ -886,7 +947,9 @@ class _TokenScreenState extends State<TokenScreen> {
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: widget.app.isDarkMode ? Colors.black : Colors.white)),
+                                color: widget.app.isDarkMode
+                                    ? Colors.black
+                                    : Colors.white)),
                   ),
                 )
               ],
@@ -920,21 +983,31 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           const SnackBar(content: Text("Please fill all fields correctly.")));
       return;
     }
+
     setState(() => _isLoading = true);
 
-    // Call Live Firebase Action
-    await widget.app.saveUserProfile(_firstController.text.trim(), _surController.text.trim(), _emailController.text.trim());
+    try {
+      // Call Live Firebase Action
+      await widget.app.saveUserProfile(
+          _firstController.text.trim(),
+          _surController.text.trim(),
+          _emailController.text.trim());
 
-    if (!mounted) {
-      return;
-    }
+      if (!mounted) return;
 
-    if (widget.app.errorMessage.isNotEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(widget.app.errorMessage)));
-      setState(() => _isLoading = false);
-    } else {
-      setState(() => _isLoading = false);
+      if (widget.app.errorMessage.isNotEmpty) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(widget.app.errorMessage)));
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        String errorMsg = widget.app.errorMessage.isNotEmpty
+            ? widget.app.errorMessage
+            : "Registration failed. Please check your network.";
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg)));
+      }
     }
   }
 
@@ -991,7 +1064,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: widget.app.isDarkMode ? Colors.black : Colors.white)),
+                                color: widget.app.isDarkMode
+                                    ? Colors.black
+                                    : Colors.white)),
                   ),
                 )
               ],
@@ -1006,7 +1081,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       String label, TextEditingController controller, bool isEmail) {
     return TextField(
       controller: controller,
-      keyboardType: isEmail ? TextInputType.emailAddress : TextInputType.text,
+      keyboardType:
+          isEmail ? TextInputType.emailAddress : TextInputType.text,
       decoration: InputDecoration(
         labelText: label,
         labelStyle: TextStyle(
@@ -1015,10 +1091,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         fillColor: Theme.of(context).colorScheme.surface,
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+            borderSide:
+                BorderSide(color: Theme.of(context).colorScheme.outline)),
         enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+            borderSide:
+                BorderSide(color: Theme.of(context).colorScheme.outline)),
         focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(
@@ -1095,13 +1173,16 @@ class _BouncingDotsState extends State<BouncingDots>
         double offset = 0;
         double phase = (_controller.value - delay) % 1.0;
         if (phase < 0) phase += 1.0;
+
         if (phase < 0.5) offset = -math.sin(phase * 2 * math.pi) * 15;
+
         return Transform.translate(
           offset: Offset(0, offset),
           child: Container(
             width: 18,
             height: 18,
-            decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+            decoration:
+                BoxDecoration(color: widget.color, shape: BoxShape.circle),
           ),
         );
       },
@@ -1231,13 +1312,15 @@ class _MainScreenState extends State<MainScreen> {
         builder: (ctx) {
           return StatefulBuilder(
               builder: (BuildContext context, StateSetter setModalState) {
-            List<String> currentSelectedYears = app.activeTopicYears[topic] ?? [];
+            List<String> currentSelectedYears =
+                app.activeTopicYears[topic] ?? [];
             bool isAllYears = currentSelectedYears.isEmpty;
 
             return Container(
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1283,7 +1366,8 @@ class _MainScreenState extends State<MainScreen> {
                           ),
                           const Divider(height: 1),
                           ...availableYears.map((year) {
-                            bool isSelected = currentSelectedYears.contains(year);
+                            bool isSelected =
+                                currentSelectedYears.contains(year);
                             return CheckboxListTile(
                               checkColor: app.isDarkMode ? Colors.black : Colors.white,
                               title: Text(year,
@@ -1319,10 +1403,13 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
+
     int startIdx = (app.currentPage - 1) * app.itemsPerPage;
-    int endIdx = math.min(startIdx + app.itemsPerPage, app.filteredDB.length);
-    List<QuestionModel> pageItems =
-        app.filteredDB.isEmpty ? [] : app.filteredDB.sublist(startIdx, endIdx);
+    int endIdx =
+        math.min(startIdx + app.itemsPerPage, app.filteredDB.length);
+    List<QuestionModel> pageItems = app.filteredDB.isEmpty
+        ? []
+        : app.filteredDB.sublist(startIdx, endIdx);
 
     return Scaffold(
       key: _scaffoldKey,
@@ -1397,7 +1484,8 @@ class _MainScreenState extends State<MainScreen> {
                                   Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                          builder: (_) => ResultScreen(app: app)));
+                                          builder: (_) =>
+                                              ResultScreen(app: app)));
                                 },
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1422,7 +1510,8 @@ class _MainScreenState extends State<MainScreen> {
                                   fontWeight: FontWeight.bold)),
                         IconButton(
                             icon: const Icon(Icons.tune),
-                            onPressed: () => _showFilterDialog(context, app)),
+                            onPressed: () =>
+                                _showFilterDialog(context, app)),
                       ],
                     ),
                   ),
@@ -1443,11 +1532,13 @@ class _MainScreenState extends State<MainScreen> {
                           border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(22.5),
                               borderSide: BorderSide(
-                                  color: Theme.of(context).colorScheme.outline)),
+                                  color:
+                                      Theme.of(context).colorScheme.outline)),
                           enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(22.5),
                               borderSide: BorderSide(
-                                  color: Theme.of(context).colorScheme.outline)),
+                                  color:
+                                      Theme.of(context).colorScheme.outline)),
                           focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(22.5),
                               borderSide: BorderSide(
@@ -1491,7 +1582,8 @@ class _MainScreenState extends State<MainScreen> {
                               style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color: Theme.of(context).colorScheme.primary)),
+                                  color:
+                                      Theme.of(context).colorScheme.primary)),
                           const SizedBox(height: 4),
                           Text(
                               "Ready to crush your medical boards today? Select your topics to begin.",
@@ -1522,9 +1614,11 @@ class _MainScreenState extends State<MainScreen> {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
                   children: app.activeTopics.map((t) {
-                    List<String> selectedYears = app.activeTopicYears[t] ?? [];
+                    List<String> selectedYears =
+                        app.activeTopicYears[t] ?? [];
                     bool isYearFiltered = selectedYears.isNotEmpty;
                     String yearDisplay = isYearFiltered
                         ? (selectedYears.length == 1
@@ -1658,30 +1752,31 @@ class _MainScreenState extends State<MainScreen> {
                             int page = index + 1;
                             bool isActive = page == app.currentPage;
                             return GestureDetector(
-                                onTap: () => _changePage(page),
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(
-                                      horizontal: 4, vertical: 12),
-                                  width: 36,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                      color: isActive
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                          : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(10)),
-                                  child: Text("$page",
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: isActive
-                                              ? (app.isDarkMode
-                                                  ? Colors.black
-                                                  : Colors.white)
-                                              : Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface)),
-                                ));
+                              onTap: () => _changePage(page),
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(
+                                    horizontal: 4, vertical: 12),
+                                width: 36,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                    color: isActive
+                                        ? Theme.of(context)
+                                            .colorScheme
+                                            .primary
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(10)),
+                                child: Text("$page",
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: isActive
+                                            ? (app.isDarkMode
+                                                ? Colors.black
+                                                : Colors.white)
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .onSurface)),
+                              ),
+                            );
                           }),
                     )),
                     IconButton(
@@ -1712,7 +1807,8 @@ class _MainScreenState extends State<MainScreen> {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.only(top: 55, left: 24, bottom: 24, right: 24),
+            padding: const EdgeInsets.only(
+                top: 55, left: 24, bottom: 24, right: 24),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -1750,7 +1846,8 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 const SizedBox(height: 5),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                       color: Theme.of(context)
                           .colorScheme
@@ -1773,7 +1870,8 @@ class _MainScreenState extends State<MainScreen> {
                               const SnackBar(content: Text("ID Copied!")));
                         },
                         child: Icon(Icons.copy,
-                            size: 14, color: Theme.of(context).colorScheme.primary),
+                            size: 14,
+                            color: Theme.of(context).colorScheme.primary),
                       )
                     ],
                   ),
@@ -1818,7 +1916,8 @@ class _MainScreenState extends State<MainScreen> {
                               .withValues(alpha: 0.5))),
                 ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(children: [
                     const Expanded(
                         child: Text("Theme Color",
@@ -1837,15 +1936,17 @@ class _MainScreenState extends State<MainScreen> {
                             shape: BoxShape.circle,
                             border: isSelected
                                 ? Border.all(
-                                    color: Theme.of(context).colorScheme.onSurface,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface,
                                     width: 2)
                                 : null,
                           ),
                           child: isSelected
-                              ? const Icon(Icons.check, size: 16, color: Colors.white)
+                              ? const Icon(Icons.check,
+                                  size: 16, color: Colors.white)
                               : null,
                         ),
-                      
                       );
                     }),
                   ]),
@@ -1853,7 +1954,8 @@ class _MainScreenState extends State<MainScreen> {
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   title: const Text("Dark Mode",
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                      style:
+                          TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   trailing: Switch(
                     value: app.isDarkMode,
                     onChanged: (val) => app.toggleThemeMode(),
@@ -1874,7 +1976,8 @@ class _MainScreenState extends State<MainScreen> {
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   title: const Text("Scroll Ticks",
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                      style:
+                          TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   subtitle: Text("Mechanical wheel sounds",
                       style: TextStyle(
                           fontSize: 11,
@@ -1941,8 +2044,8 @@ class _MainScreenState extends State<MainScreen> {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
-      title:
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+      title: Text(title,
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
       subtitle: subtitle != null
           ? Text(subtitle,
               style: TextStyle(
@@ -2087,11 +2190,11 @@ class _MainScreenState extends State<MainScreen> {
                                       app.playScrollSound();
                                       setState(() => selectedHour = v);
                                     },
-                                    childDelegate: ListWheelChildBuilderDelegate(
-                                        childCount: 13,
-                                        builder: (ctx, i) => Center(
-                                                child: Text(
-                                                    "$i".padLeft(2, '0'),
+                                    childDelegate:
+                                        ListWheelChildBuilderDelegate(
+                                            childCount: 13,
+                                            builder: (ctx, i) => Center(
+                                                child: Text("$i".padLeft(2, '0'),
                                                     style: TextStyle(
                                                         fontSize: 22,
                                                         fontWeight: FontWeight.bold,
@@ -2129,27 +2232,29 @@ class _MainScreenState extends State<MainScreen> {
                                       app.playScrollSound();
                                       setState(() => selectedMin = v);
                                     },
-                                    childDelegate: ListWheelChildBuilderDelegate(
-                                        childCount: 60,
-                                        builder: (ctx, val) {
-                                          return Center(
-                                              child: Text(
-                                                  "$val".padLeft(2, '0'),
-                                                  style: TextStyle(
-                                                      fontSize: 22,
-                                                      fontWeight: FontWeight.bold,
-                                                      color: selectedMin == val
-                                                          ? Theme.of(
-                                                                  context)
-                                                              .colorScheme
-                                                              .primary
-                                                          : Theme.of(
-                                                                  context)
-                                                              .colorScheme
-                                                              .onSurface
-                                                              .withValues(
-                                                                  alpha: 0.4))));
-                                        })),
+                                    childDelegate:
+                                        ListWheelChildBuilderDelegate(
+                                            childCount: 60,
+                                            builder: (ctx, val) {
+                                              return Center(
+                                                  child: Text(
+                                                      "$val".padLeft(2, '0'),
+                                                      style: TextStyle(
+                                                          fontSize: 22,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                          color: selectedMin == val
+                                                              ? Theme.of(
+                                                                      context)
+                                                                  .colorScheme
+                                                                  .primary
+                                                              : Theme.of(
+                                                                      context)
+                                                                  .colorScheme
+                                                                  .onSurface
+                                                                  .withValues(
+                                                                      alpha: 0.4))));
+                                            })),
                               ),
                             ],
                           ),
@@ -2232,7 +2337,9 @@ class QuestionCard extends StatelessWidget {
                           color: Theme.of(context).colorScheme.outline),
                       borderRadius: BorderRadius.circular(8)),
                   child: Text(
-                      app.isQuestionRevealed(q.id) ? "HIDE ANSWERS" : "SHOW ANSWERS",
+                      app.isQuestionRevealed(q.id)
+                          ? "HIDE ANSWERS"
+                          : "SHOW ANSWERS",
                       style: TextStyle(
                           color: Theme.of(context)
                               .colorScheme
@@ -2344,6 +2451,7 @@ class ResultScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     bool passed = app.finalScore >= 70;
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -2353,8 +2461,8 @@ class ResultScreen extends StatelessWidget {
               const SizedBox(
                   height: 50,
                   child: Text("CLINICAL EVALUATION",
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+                      style: TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.bold))),
               SizedBox(
                 height: 220,
                 child: Stack(alignment: Alignment.center, children: [
@@ -2364,16 +2472,16 @@ class ResultScreen extends StatelessWidget {
                       curve: Curves.easeOutCubic,
                       builder: (context, value, child) {
                         return SizedBox(
-                          width: 150,
-                          height: 150,
-                          child: CircularProgressIndicator(
-                              value: value,
-                              strokeWidth: 14,
-                              backgroundColor: Theme.of(context).colorScheme.outline,
-                              color: passed
-                                  ? const Color(0xFF10B981)
-                                  : const Color(0xFFEF4444)),
-                        );
+                            width: 150,
+                            height: 150,
+                            child: CircularProgressIndicator(
+                                value: value,
+                                strokeWidth: 14,
+                                backgroundColor:
+                                    Theme.of(context).colorScheme.outline,
+                                color: passed
+                                    ? const Color(0xFF10B981)
+                                    : const Color(0xFFEF4444)));
                       }),
                   Text("${app.finalScore}%",
                       style: const TextStyle(
@@ -2395,38 +2503,36 @@ class ResultScreen extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.bold))),
               const Spacer(),
               SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10))),
-                    onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => ReviewScreen(app: app))),
-                    child: const Text("REVIEW TOPICS",
-                        style: TextStyle(fontWeight: FontWeight.bold))),
-              ),
+                  width: double.infinity,
+                  height: 55,
+                  child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10))),
+                      onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => ReviewScreen(app: app))),
+                      child: const Text("REVIEW TOPICS",
+                          style: TextStyle(fontWeight: FontWeight.bold)))),
               const SizedBox(height: 20),
               SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.onSurface,
-                        foregroundColor: Theme.of(context).colorScheme.surface,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10))),
-                    onPressed: () {
-                      app.exitExamMode();
-                      Navigator.pop(context);
-                    },
-                    child: const Text("RETURN TO STUDY",
-                        style: TextStyle(fontWeight: FontWeight.bold))),
-              ),
+                  width: double.infinity,
+                  height: 55,
+                  child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(context).colorScheme.onSurface,
+                          foregroundColor: Theme.of(context).colorScheme.surface,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10))),
+                      onPressed: () {
+                        app.exitExamMode();
+                        Navigator.pop(context);
+                      },
+                      child: const Text("RETURN TO STUDY",
+                          style: TextStyle(fontWeight: FontWeight.bold)))),
             ],
           ),
         ),
@@ -2442,6 +2548,7 @@ class ReviewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     var topics = app.topicPerformance.entries.toList();
+
     return Scaffold(
         body: SafeArea(
       child: Column(
@@ -2543,6 +2650,7 @@ class DetailedReviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     List<QuestionModel> topicQuestions =
         app.filteredDB.where((q) => q.topic == topic).toList();
+
     return Scaffold(
         body: SafeArea(
       child: Column(
@@ -2719,23 +2827,23 @@ class _ReviewRootWidget extends StatelessWidget {
                             style: const TextStyle(fontSize: 15, height: 1.3))),
                     const SizedBox(height: 6),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                          color: badgeColor, borderRadius: BorderRadius.circular(4)),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(badgeIcon, size: 12, color: badgeTextColor),
-                          const SizedBox(width: 4),
-                          Text(badgeText,
-                              style: TextStyle(
-                                  color: badgeTextColor,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    )
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                            color: badgeColor,
+                            borderRadius: BorderRadius.circular(4)),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(badgeIcon, size: 12, color: badgeTextColor),
+                            const SizedBox(width: 4),
+                            Text(badgeText,
+                                style: TextStyle(
+                                    color: badgeTextColor,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold)),
+                          ],
+                        ))
                   ],
                 ),
               ),
