@@ -52,7 +52,7 @@ class _TokenScreenState extends State<TokenScreen> {
                 TextField(
                   controller: _tokenController,
                   maxLength: 17, textCapitalization: TextCapitalization.characters,
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]'))],
+                  inputFormatters:[FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]'))],
                   style: const TextStyle(fontSize: 20, letterSpacing: 2, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                   decoration: InputDecoration(
@@ -83,7 +83,7 @@ class _TokenScreenState extends State<TokenScreen> {
   }
 }
 
-// --- 2. REGISTRATION SCREEN (WITH SCROLL WHEELS & VIP PLACEHOLDERS) ---
+// --- 2. REGISTRATION SCREEN (WITH STRICT COURSE LOCKDOWN) ---
 class RegistrationScreen extends StatefulWidget {
   final AppState app;
   const RegistrationScreen({super.key, required this.app});
@@ -108,6 +108,21 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields correctly.")));
       return;
     }
+
+    String selectedCourse = courses[_selectedCourseIdx];
+    String selectedLevel = levels[_selectedLevelIdx];
+
+    // STRICT LOCKDOWN: Only Medicine 100L and Medicine 200L are permitted.
+    if (selectedCourse != "Medicine" || (selectedLevel != "100L" && selectedLevel != "200L")) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Curriculum for $selectedCourse $selectedLevel is currently unavailable."),
+          backgroundColor: Colors.redAccent,
+        )
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -115,8 +130,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           _firstController.text.trim(),
           _surController.text.trim(),
           _emailController.text.trim(),
-          courses[_selectedCourseIdx],
-          levels[_selectedLevelIdx],
+          selectedCourse,
+          selectedLevel,
       );
 
       if (!mounted) return;
@@ -149,7 +164,6 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 Text("Your verified token will be permanently bound to the course and level you select below.", style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
                 const SizedBox(height: 25),
                 
-                // VIP PLACEHOLDERS APPLIED HERE
                 _buildField("Surname", "e.g., Abuul", _surController, false),
                 const SizedBox(height: 15),
                 _buildField("First Name", "e.g., Bemdee", _firstController, false),

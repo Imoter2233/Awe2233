@@ -25,6 +25,7 @@ void main() async {
     statusBarColor: Colors.transparent,
   ));
 
+  // SECURITY: Prevent screen recording and screenshots on Android
   try {
     if (!kIsWeb && Platform.isAndroid) {
       await platformChannel.invokeMethod('enableSecureFlag');
@@ -79,21 +80,35 @@ class _SynapseAppState extends State<SynapseApp> {
     );
   }
 
-  // The Traffic Controller: Routes user based on their locked Course Profile
+  // STRICT ROUTING GATEKEEPER
   Widget _determineStartScreen() {
     if (state.isLoading) return const SplashLoaderScreen();
     
+    // If locked out via Admin Wipe or Time Tampering
+    if (state.isLockedOut) return TokenScreen(app: state);
+
     // If not logged in, show Auth Gatekeeper
     if (!state.isLoggedIn) {
       if (state.userToken.isEmpty) return TokenScreen(app: state);
       return RegistrationScreen(app: state);
     }
 
-    // If logged in, check their registered course to load the correct UI
-    if (state.userCourse == "Medicine") {
-      return MedicalMainScreen(app: state); // The old UI
+    // STRICT COURSE & LEVEL ROUTING
+    if (state.userCourse == "Medicine" && state.userLevel == "200L") {
+      return MedicalMainScreen(app: state); // Medical UI
+    } else if (state.userCourse == "Medicine" && state.userLevel == "100L") {
+      return ScienceMainScreen(app: state); // Science/Math UI
     } else {
-      return ScienceMainScreen(app: state); // The new Math/Bio UI
+      // Fallback for unconfigured combinations
+      return Scaffold(
+        body: Center(
+          child: Text(
+            "Curriculum for ${state.userCourse} ${state.userLevel} is currently unavailable.",
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+        ),
+      );
     }
   }
 

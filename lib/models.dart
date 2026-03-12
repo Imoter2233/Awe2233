@@ -5,9 +5,19 @@ class RootItem {
   final String answer;
   final String info;
 
-  RootItem({required this.id, required this.text, required this.answer, required this.info});
+  RootItem({
+    required this.id,
+    required this.text,
+    required this.answer,
+    required this.info,
+  });
 
-  Map<String, dynamic> toJson() => {'id': id, 'text': text, 'answer': answer, 'info': info};
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'text': text,
+        'answer': answer,
+        'info': info,
+      };
 
   factory RootItem.fromJson(Map<String, dynamic> json) => RootItem(
         id: json['id'] ?? '',
@@ -20,7 +30,7 @@ class RootItem {
 // Universal Question Model handling BOTH Medical and Science formats
 class QuestionModel {
   final String id;
-  final String subject;
+  final String subject; // Also acts as Course Code for Science (e.g., MTH 202)
   final String topic;
   final String year;
   final String stem; // The main question text
