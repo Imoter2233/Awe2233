@@ -42,9 +42,9 @@ const String courseKey = "synapse_course";
 const String levelKey = "synapse_level";
 const String welcomeSeenKey = "synapse_welcome_seen";
 
-// --- BACKGROUND ISOLATE PARSERS ---
+// --- BACKGROUND ISOLATE PARSERS & CRYPTO ---
 List<QuestionModel> _decodeCsvInBackground(String csvText) {
-  List<QuestionModel> newDB =[];
+  List<QuestionModel> newDB = [];
   try {
     String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '');
     cleanCsv = cleanCsv.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
@@ -91,7 +91,7 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
             isScience: true,
           ));
         } else {
-          List<RootItem> roots =[];
+          List<RootItem> roots = [];
           for (int i = 1; i <= 5; i++) {
             String text = dict['r${i}_text'] ?? "";
             if (text.isNotEmpty) {
@@ -119,17 +119,57 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
   return newDB;
 }
 
-List<QuestionModel> _decodeJsonCacheInBackground(String jsonStr) {
+Map<String, dynamic> _encryptAndEncodeInBackground(Map<String, dynamic> args) {
   try {
-    List<dynamic> parsed = jsonDecode(jsonStr);
-    return parsed.map((e) => QuestionModel.fromJson(e)).toList();
+    List<QuestionModel> data = args['data'];
+    String token = args['token'];
+    
+    // Construct Key safely inside isolate
+    String rawKey = "${token}_SYNAPSE_SECURE_VAULT_2026";
+    if (rawKey.length < 32) {
+      rawKey = rawKey.padRight(32, 'X');
+    } else if (rawKey.length > 32) {
+      rawKey = rawKey.substring(0, 32);
+    }
+    
+    final key = encrypt_pkg.Key.fromUtf8(rawKey);
+    final iv = encrypt_pkg.IV.fromLength(16);
+    final encrypter = encrypt_pkg.Encrypter(encrypt_pkg.AES(key, mode: encrypt_pkg.AESMode.cbc));
+    
+    // Encode and Encrypt
+    String jsonStr = jsonEncode(data.map((e) => e.toJson()).toList());
+    final encrypted = encrypter.encrypt(jsonStr, iv: iv);
+    
+    return {'success': true, 'payload': encrypted.base64};
   } catch (e) {
-    return[];
+    return {'success': false, 'payload': ''};
   }
 }
 
-String _encodeJsonCacheInBackground(List<QuestionModel> data) {
-  return jsonEncode(data.map((e) => e.toJson()).toList());
+List<QuestionModel> _decryptAndDecodeInBackground(Map<String, dynamic> args) {
+  try {
+    String encryptedData = args['encryptedData'];
+    String token = args['token'];
+    
+    // Construct Key safely inside isolate
+    String rawKey = "${token}_SYNAPSE_SECURE_VAULT_2026";
+    if (rawKey.length < 32) {
+      rawKey = rawKey.padRight(32, 'X');
+    } else if (rawKey.length > 32) {
+      rawKey = rawKey.substring(0, 32);
+    }
+    
+    final key = encrypt_pkg.Key.fromUtf8(rawKey);
+    final iv = encrypt_pkg.IV.fromLength(16);
+    final encrypter = encrypt_pkg.Encrypter(encrypt_pkg.AES(key, mode: encrypt_pkg.AESMode.cbc));
+    
+    // Decrypt and Decode
+    final decryptedStr = encrypter.decrypt64(encryptedData, iv: iv);
+    List<dynamic> parsed = jsonDecode(decryptedStr);
+    return parsed.map((e) => QuestionModel.fromJson(e)).toList();
+  } catch (e) {
+    return []; 
+  }
 }
 
 // --- APP STATE MANAGER ---
@@ -156,11 +196,11 @@ class AppState extends ChangeNotifier {
   String errorMessage = "";
 
   List<QuestionModel> fullDB = [];
-  List<QuestionModel> filteredDB =[];
+  List<QuestionModel> filteredDB = [];
   String searchText = "";
   
   List<String> activeTopics = [];
-  List<String> allTopics =[];
+  List<String> allTopics = [];
   Map<String, List<String>> activeTopicYears = {};
   Map<String, Set<String>> courseTopics = {}; 
 
@@ -177,15 +217,18 @@ class AppState extends ChangeNotifier {
 
   bool isExamMode = false;
   Map<String, String> userAnswers = {};
-  Map<String, bool> studyRevealed = {};
-  Map<String, bool> explanationRevealed = {};
+  
+  // --- STATE PERSISTENCE MAPS ---
+  Map<String, bool> studyRevealed = {}; // Answers
+  Map<String, bool> explanationRevealed = {}; // Text Explanations
+  Map<String, bool> imageRevealed = {}; // Images (Only this clears on pagination)
 
   Timer? _timer;
   int timeLeftSeconds = 0;
   int finalScore = 0;
   Map<String, Map<String, int>> topicPerformance = {};
 
-  final List<Color> availableColors =[
+  final List<Color> availableColors = [
     const Color(0xFFF59E0B),
     const Color(0xFF14B8A6),
     const Color(0xFF8B5CF6),
@@ -230,21 +273,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --- SECURITY: OFFLINE BULLETPROOF AES-256 ---
-  encrypt_pkg.Encrypter _getEncrypter() {
-    // Generates key purely from Token & App Signature to ensure it never fails offline
-    String rawKey = "${userToken}_SYNAPSE_SECURE_VAULT_2026";
-    if (rawKey.length < 32) {
-      rawKey = rawKey.padRight(32, 'X');
-    } else if (rawKey.length > 32) {
-      rawKey = rawKey.substring(0, 32);
-    }
-    final key = encrypt_pkg.Key.fromUtf8(rawKey);
-    return encrypt_pkg.Encrypter(encrypt_pkg.AES(key, mode: encrypt_pkg.AESMode.cbc));
-  }
-
-  final _iv = encrypt_pkg.IV.fromLength(16);
-
   // --- SECURITY: GLOBAL TIME ---
   Future<DateTime?> _getGlobalTime() async {
     try {
@@ -275,10 +303,7 @@ class AppState extends ChangeNotifier {
           return false;
         }
 
-        // ==============================================================
-        // 🚨 30 MINUTES OFFLINE LOCKOUT 🚨
-        // To revert to 14 days, change .inMinutes > 30 to .inHours > 336
-        // ==============================================================
+        // 30 MINUTES OFFLINE LOCKOUT
         if (localTime.difference(lastSyncDate).inMinutes > 30) {
           errorMessage = "Security Lock: 30-Min Limit Reached. Connect to internet.";
           isLockedOut = true;
@@ -322,6 +347,7 @@ class AppState extends ChangeNotifier {
     userAnswers.clear();
     studyRevealed.clear();
     explanationRevealed.clear();
+    imageRevealed.clear();
     courseTopics.clear();
     allTopics.clear();
     
@@ -366,7 +392,6 @@ class AppState extends ChangeNotifier {
   Future<void> registerToken(String token) async {
     try {
       errorMessage = "";
-      // If weak network blocks API, use local time to proceed. Firebase handles real block.
       DateTime ping = await _getGlobalTime() ?? DateTime.now();
 
       DocumentSnapshot tokenDoc = await FirebaseFirestore.instance.collection('tokens').doc(token).get();
@@ -388,7 +413,6 @@ class AppState extends ChangeNotifier {
       bool isUsed = data['isUsed'] ?? false;
       String deviceId = await _getDeviceId();
 
-      // Only wipe old DB if this is a DIFFERENT token to prevent crowding/loss
       if (userToken.isNotEmpty && userToken != token) {
         await _wipeLocalData();
       }
@@ -538,28 +562,35 @@ class AppState extends ChangeNotifier {
     await _executeRemoteWipe("Logged out.");
   }
 
-  // DECRYPTION READ
+  // DECRYPTION READ (Robust Isolate Implementation)
   Future<void> _loadLocalFileCache() async {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$cacheFileName');
+      
       if (await file.exists()) {
-        final encrypter = _getEncrypter();
         String encryptedData = await file.readAsString();
         if (encryptedData.isNotEmpty) {
-          final decryptedStr = encrypter.decrypt64(encryptedData, iv: _iv);
-          fullDB = await compute(_decodeJsonCacheInBackground, decryptedStr);
-          _setupData();
-          isLoading = false;
-          notifyListeners();
+          final parsedData = await compute(_decryptAndDecodeInBackground, {
+            'encryptedData': encryptedData,
+            'token': userToken,
+          });
+          
+          if (parsedData.isNotEmpty) {
+            fullDB = parsedData;
+            _setupData();
+          }
         }
       }
     } catch (e) {
-      debugPrint("File Cache Decrypt Error.");
+      debugPrint("File Cache Decrypt Error: $e");
+    } finally {
+      isLoading = false;
+      notifyListeners();
     }
   }
 
-  // ENCRYPTION WRITE
+  // ENCRYPTION WRITE (Atomic Write + Isolate Implementation)
   Future<void> _fetchFromServer() async {
     try {
       String targetUrl = (userCourse == "Medicine" && userLevel == "200L") ? medicalCsvUrl : scienceCsvUrl;
@@ -567,19 +598,31 @@ class AppState extends ChangeNotifier {
 
       if (response.statusCode == 200) {
         List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
+        
         if (parsed.isNotEmpty) {
           fullDB = parsed;
           _setupData();
+          
+          isLoading = false;
+          notifyListeners();
+          
           final directory = await getApplicationDocumentsDirectory();
-          final file = File('${directory.path}/$cacheFileName');
-          String jsonStr = await compute(_encodeJsonCacheInBackground, fullDB);
-          final encrypter = _getEncrypter();
-          final encrypted = encrypter.encrypt(jsonStr, iv: _iv);
-          await file.writeAsString(encrypted.base64, flush: true);
+          final tempFile = File('${directory.path}/$cacheFileName.tmp'); 
+          final finalFile = File('${directory.path}/$cacheFileName');
+          
+          final result = await compute(_encryptAndEncodeInBackground, {
+            'data': fullDB,
+            'token': userToken,
+          });
+          
+          if (result['success'] == true) {
+            await tempFile.writeAsString(result['payload'], flush: true);
+            await tempFile.rename(finalFile.path);
+          }
         }
       }
     } catch (e) {
-      debugPrint("Sync Error.");
+      debugPrint("Sync Error: $e");
     } finally {
       isLoading = false;
       notifyListeners();
@@ -668,7 +711,9 @@ class AppState extends ChangeNotifier {
       }
       return topicMatch && searchMatch;
     }).toList();
+    
     currentPage = 1;
+    imageRevealed.clear(); // Only images hide when filters change
     notifyListeners();
   }
 
@@ -695,13 +740,14 @@ class AppState extends ChangeNotifier {
   }
 
   void clearYearsForTopic(String topic) {
-    activeTopicYears[topic] =[];
+    activeTopicYears[topic] = [];
     applyFilters();
   }
 
   void setPage(int page) {
     if (page >= 1 && page <= totalPages) {
       currentPage = page;
+      imageRevealed.clear(); // Only images hide when changing pages
       notifyListeners();
     }
   }
@@ -792,6 +838,12 @@ class AppState extends ChangeNotifier {
 
   void toggleExplanation(String rootId) {
     explanationRevealed[rootId] = !(explanationRevealed[rootId] ?? false);
+    notifyListeners();
+  }
+  
+  // NEW: Dedicated toggle for hiding/showing images
+  void toggleImageReveal(String qId) {
+    imageRevealed[qId] = !(imageRevealed[qId] ?? false);
     notifyListeners();
   }
 
