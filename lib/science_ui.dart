@@ -203,7 +203,7 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
             ),
             if (_showBanner && !app.isExamMode)
               Container(
-                width: double.infinity, margin: const EdgeInsets.all(15), padding: const EdgeInsets.all(15),
+                width: double.infinity, margin: const EdgeInsets.all(15), padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3))),
                 child: Row(
                   children:[
@@ -211,13 +211,13 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children:[
-                          Text("Welcome, ${app.firstName}!", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+                          Text("Welcome, ${app.firstName}!", style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
                           const SizedBox(height: 4),
-                          Text("Ready to crush your ${app.userCourse} (${app.userLevel}) modules? Select your courses to begin.", style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8))),
+                          Text("Select your courses to begin.", style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8))),
                         ],
                       ),
                     ),
-                    IconButton(icon: const Icon(Icons.close, size: 24), color: Theme.of(context).colorScheme.primary, onPressed: () { setState(() => _showBanner = false); app.markWelcomeSeen(); })
+                    IconButton(icon: const Icon(Icons.close, size: 20), color: Theme.of(context).colorScheme.primary, onPressed: () { setState(() => _showBanner = false); app.markWelcomeSeen(); })
                   ],
                 ),
               ),
@@ -272,7 +272,7 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                       onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
                       child: ListView.builder(
                         physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
-                        itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: ScienceQuestionCard(q: pageItems[i], app: app, isGloballyExpanded: _masterExpandAll)),
+                        itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 15), child: ScienceQuestionCard(q: pageItems[i], app: app, isGloballyExpanded: _masterExpandAll)),
                       ),
                     ),
             ),
@@ -508,7 +508,7 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                   backgroundColor: Theme.of(context).colorScheme.surface, title: const Text("EXAM DURATION", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   content: SizedBox(
                       height: 200,
-                      child: Row(children: [
+                      child: Row(children:[
                         Expanded(
                           child: Column(
                             children:[
@@ -578,18 +578,84 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
 
     for (var match in regex.allMatches(text)) {
       if (match.start > lastMatchEnd) {
-        spans.add(Text(text.substring(lastMatchEnd, match.start), style: TextStyle(fontSize: 16, color: textColor, height: 1.5, fontWeight: FontWeight.bold)));
+        spans.add(Text(text.substring(lastMatchEnd, match.start), style: TextStyle(fontSize: 15, color: textColor, height: 1.4, fontWeight: FontWeight.bold)));
       }
       String mathExpr = match.group(1) ?? match.group(2) ?? '';
       spans.add(SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          child: Math.tex(mathExpr, textStyle: TextStyle(fontSize: 16, color: textColor), mathStyle: MathStyle.display, onErrorFallback: (err) => Text(mathExpr, style: const TextStyle(color: Colors.red)))));
+          child: Math.tex(mathExpr, textStyle: TextStyle(fontSize: 15, color: textColor), mathStyle: MathStyle.display, onErrorFallback: (err) => Text(mathExpr, style: const TextStyle(color: Colors.red)))));
       lastMatchEnd = match.end;
     }
     if (lastMatchEnd < text.length) {
-      spans.add(Text(text.substring(lastMatchEnd), style: TextStyle(fontSize: 16, color: textColor, height: 1.5, fontWeight: FontWeight.bold)));
+      spans.add(Text(text.substring(lastMatchEnd), style: TextStyle(fontSize: 15, color: textColor, height: 1.4, fontWeight: FontWeight.bold)));
     }
     return Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: spans);
+  }
+
+  Widget _buildGapFillText(String text, String qId, AppState app, BuildContext context, bool isDark) {
+    List<InlineSpan> spans =[];
+    Color textColor = Theme.of(context).colorScheme.onSurface;
+    final regex = RegExp(r'\[\[(.*?)\|(.*?)\]\]');
+    int lastMatchEnd = 0;
+    int gapIndex = 1;
+
+    for (var match in regex.allMatches(text)) {
+      if (match.start > lastMatchEnd) {
+        spans.add(TextSpan(text: text.substring(lastMatchEnd, match.start), style: TextStyle(color: textColor, fontSize: 15, height: 1.8, fontWeight: FontWeight.bold)));
+      }
+      String answer = match.group(1) ?? '';
+      String hint = match.group(2) ?? '';
+      bool isRevealed = app.studyRevealed['${qId}_gap_$gapIndex'] ?? false;
+      int currentIndex = gapIndex;
+
+      spans.add(WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: GestureDetector(
+            onTap: () {
+              app.toggleStudyReveal('${qId}_gap_$currentIndex', !isRevealed);
+            },
+            child: Tooltip(
+              message: hint,
+              preferBelow: false,
+              textStyle: const TextStyle(color: Colors.white, fontSize: 12),
+              decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(8)),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                    color: isRevealed ? Colors.transparent : (isDark ? const Color(0xFF1E293B) : const Color(0xFFE0E5EC)),
+                    borderRadius: BorderRadius.circular(8),
+                    border: isRevealed ? const Border(bottom: BorderSide(color: Color(0xFF10B981), width: 2)) : Border.all(color: isDark ? Colors.white12 : Colors.black12)),
+                child: Text(isRevealed ? answer : '($gapIndex)', style: TextStyle(color: isRevealed ? const Color(0xFF10B981) : Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 15)),
+              ),
+            ),
+          )));
+      lastMatchEnd = match.end;
+      gapIndex++;
+    }
+    if (lastMatchEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastMatchEnd), style: TextStyle(color: textColor, fontSize: 15, height: 1.8, fontWeight: FontWeight.bold)));
+    }
+
+    bool allRevealed = app.studyRevealed['${qId}_full'] ?? false;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
+      RichText(text: TextSpan(children: spans)),
+      const SizedBox(height: 15),
+      if (!app.isExamMode)
+        GestureDetector(
+            onTap: () {
+              bool target = !allRevealed;
+              app.toggleStudyReveal('${qId}_full', target);
+              for (int i = 1; i < gapIndex; i++) {
+                app.toggleStudyReveal('${qId}_gap_$i', target);
+              }
+            },
+            child: Container(
+                width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, border: Border.all(color: Theme.of(context).colorScheme.outline), borderRadius: BorderRadius.circular(8)),
+                child: Center(child: Text(allRevealed ? "HIDE ALL ANSWERS" : "REVEAL ALL ANSWERS", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 12)))))
+    ]);
   }
 
   Widget _buildOption(String letter, String text, QuestionModel q, AppState app, bool isDark) {
@@ -628,14 +694,14 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
         child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             width: double.infinity,
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(18),
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
                 color: bg,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: borderColor, width: 1.5)),
             child: Row(children:[
-              Text("$letter. ", style: TextStyle(fontWeight: FontWeight.w900, color: textCol, fontSize: 16)),
+              Text("$letter. ", style: TextStyle(fontWeight: FontWeight.w900, color: textCol, fontSize: 15)),
               Expanded(child: _buildMathText(text, context, isDark, overrideColor: textCol))
             ])));
   }
@@ -648,7 +714,7 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
 
     return Container(
       decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children:[
@@ -657,17 +723,17 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
             const Spacer(),
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: const Color(0xFFF59E0B), borderRadius: BorderRadius.circular(6)), child: Text(widget.q.year, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold))),
           ]),
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
           
           if (widget.q.imageUrl.isNotEmpty) ...[
             GestureDetector(
                 onTap: () => setState(() => _imgOpen = !_imgOpen),
                 child: Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(15),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                         border: Border.all(color: primary, style: BorderStyle.solid, width: 2),
-                        borderRadius: BorderRadius.circular(15)),
+                        borderRadius: BorderRadius.circular(12)),
                     alignment: Alignment.center,
                     child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -688,22 +754,23 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
                     child: Image(image: imageProvider, fit: BoxFit.cover)),
               ),
             ],
-            const SizedBox(height: 20),
+            const SizedBox(height: 15),
           ],
           
-          _buildMathText(widget.q.stem, context, isDark),
+          if (widget.q.gapContent.isNotEmpty)
+            _buildGapFillText(widget.q.gapContent, widget.q.id, widget.app, context, isDark)
+          else
+            _buildMathText(widget.q.stem, context, isDark),
           
-          if (_isLocallyExpanded) ...[
-            const SizedBox(height: 20),
-            if (widget.q.optionA.isNotEmpty) ...[
-              _buildOption('A', widget.q.optionA, widget.q, widget.app, isDark),
-              _buildOption('B', widget.q.optionB, widget.q, widget.app, isDark),
-              _buildOption('C', widget.q.optionC, widget.q, widget.app, isDark),
-              _buildOption('D', widget.q.optionD, widget.q, widget.app, isDark),
-            ],
+          if (_isLocallyExpanded && widget.q.optionA.isNotEmpty) ...[
+            const SizedBox(height: 15),
+            _buildOption('A', widget.q.optionA, widget.q, widget.app, isDark),
+            _buildOption('B', widget.q.optionB, widget.q, widget.app, isDark),
+            _buildOption('C', widget.q.optionC, widget.q, widget.app, isDark),
+            _buildOption('D', widget.q.optionD, widget.q, widget.app, isDark),
           ],
 
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
           Row(
             children:[
               if (!widget.app.isExamMode && widget.q.optionA.isNotEmpty)
@@ -716,16 +783,17 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
                   ),
                 ),
               const SizedBox(width: 10),
-              Container(
-                decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(8), border: Border.all(color: Theme.of(context).colorScheme.outline)),
-                child: IconButton(
-                  icon: Icon(_isLocallyExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                  onPressed: () => setState(() => _isLocallyExpanded = !_isLocallyExpanded),
+              if (widget.q.optionA.isNotEmpty)
+                Container(
+                  decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(8), border: Border.all(color: Theme.of(context).colorScheme.outline)),
+                  child: IconButton(
+                    icon: Icon(_isLocallyExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                    onPressed: () => setState(() => _isLocallyExpanded = !_isLocallyExpanded),
+                  ),
                 ),
-              ),
               const Spacer(),
-              Text(widget.q.topic, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), fontWeight: FontWeight.bold, fontSize: 12)),
+              Text(widget.q.topic, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), fontWeight: FontWeight.bold, fontSize: 11)),
             ],
           ),
 

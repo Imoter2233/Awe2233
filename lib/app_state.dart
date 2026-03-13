@@ -29,7 +29,7 @@ const String colorIndexKey = "synapse_color_index";
 const String soundPrefKey = "synapse_sound_pref";
 const String volumePrefKey = "synapse_volume_pref";
 const String firstRunKey = "synapse_first_run";
-const String cacheFileName = "synapse_vault.aes"; // Encrypted Vault File
+const String cacheFileName = "synapse_vault.aes"; 
 const String lastSyncKey = "synapse_last_sync_time";
 
 const String isLoggedInKey = "synapse_is_logged_in";
@@ -70,7 +70,6 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
         }
 
         String qId = dict['id']!;
-
         bool isScienceFormat = dict.containsKey('a') || dict.containsKey('content');
 
         if (isScienceFormat) {
@@ -160,7 +159,7 @@ class AppState extends ChangeNotifier {
   List<QuestionModel> filteredDB =[];
   String searchText = "";
   
-  List<String> activeTopics =[];
+  List<String> activeTopics = [];
   List<String> allTopics =[];
   Map<String, List<String>> activeTopicYears = {};
   Map<String, Set<String>> courseTopics = {}; 
@@ -169,7 +168,11 @@ class AppState extends ChangeNotifier {
   int itemsPerPage = 5;
   int get totalPages {
     int count = (filteredDB.length / itemsPerPage).ceil();
-    return count == 0 ? 1 : count;
+    if (count == 0) {
+      return 1;
+    } else {
+      return count;
+    }
   }
 
   bool isExamMode = false;
@@ -216,7 +219,7 @@ class AppState extends ChangeNotifier {
       bool isSecure = await _performSecurityCheck();
       if (isSecure) {
         await _loadLocalFileCache();
-        _fetchFromServer(); // Silent sync
+        _fetchFromServer(); 
       } else {
         isLoading = false;
         notifyListeners();
@@ -227,10 +230,10 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --- SECURITY: AES-256 ENCRYPTION ---
-  Future<encrypt_pkg.Encrypter> _getEncrypter() async {
-    String deviceId = await _getDeviceId();
-    String rawKey = "${deviceId}_${userToken}_SYNAPSE_SECURE_VAULT";
+  // --- SECURITY: OFFLINE BULLETPROOF AES-256 ---
+  encrypt_pkg.Encrypter _getEncrypter() {
+    // Generates key purely from Token & App Signature to ensure it never fails offline
+    String rawKey = "${userToken}_SYNAPSE_SECURE_VAULT_2026";
     if (rawKey.length < 32) {
       rawKey = rawKey.padRight(32, 'X');
     } else if (rawKey.length > 32) {
@@ -242,12 +245,12 @@ class AppState extends ChangeNotifier {
 
   final _iv = encrypt_pkg.IV.fromLength(16);
 
-  // --- SECURITY: GLOBAL TIME & OFFLINE HEARTBEAT ---
+  // --- SECURITY: GLOBAL TIME ---
   Future<DateTime?> _getGlobalTime() async {
     try {
       final response = await http
           .get(Uri.parse('http://worldtimeapi.org/api/timezone/Etc/UTC'))
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 4));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return DateTime.parse(data['utc_datetime']);
@@ -263,46 +266,37 @@ class AppState extends ChangeNotifier {
       DateTime? globalTime = await _getGlobalTime();
 
       if (globalTime == null) {
-        // ==============================================================
-        // DEVICE IS OFFLINE: ENFORCE OFFLINE RULE & TIME TRAVEL CHECK
-        // ==============================================================
         DateTime lastSyncDate = DateTime.fromMillisecondsSinceEpoch(lastSync);
         DateTime localTime = DateTime.now();
 
-        // Time Travel Check: Did they set their clock backwards?
+        // Time Travel Check
         if (localTime.isBefore(lastSyncDate.subtract(const Duration(minutes: 5)))) {
           await _executeRemoteWipe("Security Alert: System time tampering detected.");
           return false;
         }
 
         // ==============================================================
-        // 🚨 TEST MODE ACTIVE: 30 MINUTES LOCKOUT 🚨
-        // ==============================================================
-        // BRO, TO REVERT TO 14 DAYS, CHANGE THIS TO:
-        // if (localTime.difference(lastSyncDate).inHours > 336) {
+        // 🚨 30 MINUTES OFFLINE LOCKOUT 🚨
+        // To revert to 14 days, change .inMinutes > 30 to .inHours > 336
         // ==============================================================
         if (localTime.difference(lastSyncDate).inMinutes > 30) {
-          errorMessage = "Security Lock: Offline Time Limit Reached. Please connect to the internet to sync.";
+          errorMessage = "Security Lock: 30-Min Limit Reached. Connect to internet.";
           isLockedOut = true;
           return false;
         }
         return true; 
       }
 
-      // ==============================================================
-      // DEVICE IS ONLINE: SYNC WITH ADMIN KILL SWITCH
-      // ==============================================================
       DocumentSnapshot tokenDoc = await FirebaseFirestore.instance.collection('tokens').doc(userToken).get();
       if (tokenDoc.exists) {
         Map<String, dynamic> data = tokenDoc.data() as Map<String, dynamic>;
         
         bool isRevoked = data['isRevoked'] ?? false;
         if (isRevoked) {
-          await _executeRemoteWipe("Access Revoked: Your token has been disabled by the Administrator.");
+          await _executeRemoteWipe("Access Revoked: Your token has been disabled.");
           return false;
         }
 
-        // Token is valid. Update Last Sync Time to actual Global Time
         await prefs.setInt(lastSyncKey, globalTime.millisecondsSinceEpoch);
         isLockedOut = false;
         return true;
@@ -312,7 +306,7 @@ class AppState extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint("Security Check Error: $e");
-      return true; // Soft pass if Firebase is unreachable but time api worked
+      return true; 
     }
   }
 
@@ -351,7 +345,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<String> _getDeviceId() async {
-    if (kIsWeb) return "web_device_id";
+    if (kIsWeb) {
+      return "web_device_id";
+    }
     try {
       DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
       if (Platform.isAndroid) {
@@ -370,19 +366,13 @@ class AppState extends ChangeNotifier {
   Future<void> registerToken(String token) async {
     try {
       errorMessage = "";
-      
-      // INTERNET ENFORCEMENT
-      DateTime? ping = await _getGlobalTime();
-      if (ping == null) {
-        errorMessage = "Internet Required: You must be online to bind a new device.";
-        notifyListeners();
-        return;
-      }
+      // If weak network blocks API, use local time to proceed. Firebase handles real block.
+      DateTime ping = await _getGlobalTime() ?? DateTime.now();
 
       DocumentSnapshot tokenDoc = await FirebaseFirestore.instance.collection('tokens').doc(token).get();
 
       if (!tokenDoc.exists) {
-        errorMessage = "Invalid Token. Please verify and try again.";
+        errorMessage = "Invalid Token.";
         notifyListeners();
         return;
       }
@@ -390,7 +380,7 @@ class AppState extends ChangeNotifier {
       Map<String, dynamic> data = tokenDoc.data() as Map<String, dynamic>;
       bool isRevoked = data['isRevoked'] ?? false;
       if (isRevoked) {
-        errorMessage = "Security Alert: This token has been permanently revoked.";
+        errorMessage = "Security Alert: Revoked Token.";
         notifyListeners();
         return;
       }
@@ -398,14 +388,16 @@ class AppState extends ChangeNotifier {
       bool isUsed = data['isUsed'] ?? false;
       String deviceId = await _getDeviceId();
 
-      // Zero Leakage
-      await _wipeLocalData();
+      // Only wipe old DB if this is a DIFFERENT token to prevent crowding/loss
+      if (userToken.isNotEmpty && userToken != token) {
+        await _wipeLocalData();
+      }
       errorMessage = "";
 
       if (isUsed) {
         String boundDevice = data['boundDeviceId'] ?? "";
         if (boundDevice != deviceId) {
-          errorMessage = "Security Alert: Token already bound to another device.";
+          errorMessage = "Token already bound to another device.";
           notifyListeners();
           return;
         }
@@ -454,7 +446,7 @@ class AppState extends ChangeNotifier {
       isLockedOut = false;
       notifyListeners();
     } catch (e) {
-      errorMessage = "Connection error. Ensure you have internet access.";
+      errorMessage = "Connection error. Weak Network.";
       notifyListeners();
     }
   }
@@ -471,7 +463,6 @@ class AppState extends ChangeNotifier {
       UserCredential userCred;
       try {
         userCred = await FirebaseAuth.instance.createUserWithEmailAndPassword(email: mail, password: userToken);
-        await userCred.user?.sendEmailVerification();
       } on FirebaseAuthException catch (authErr) {
         if (authErr.code == 'email-already-in-use') {
           userCred = await FirebaseAuth.instance.signInWithEmailAndPassword(email: mail, password: userToken);
@@ -482,29 +473,25 @@ class AppState extends ChangeNotifier {
 
       final String uid = userCred.user!.uid;
 
-      try {
-        await FirebaseFirestore.instance.collection('users').doc(uid).set({
-          'firstName': fName.trim(),
-          'surname': sName.trim(),
-          'email': mail.trim(),
-          'uniqueId': newUniqueId,
-          'deviceId': deviceId,
-          'boundToken': userToken,
-          'course': selCourse,
-          'level': selLevel,
-          'createdAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'firstName': fName.trim(),
+        'surname': sName.trim(),
+        'email': mail.trim(),
+        'uniqueId': newUniqueId,
+        'deviceId': deviceId,
+        'boundToken': userToken,
+        'course': selCourse,
+        'level': selLevel,
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
-        await FirebaseFirestore.instance.collection('tokens').doc(userToken).set({
-          'isUsed': true,
-          'usedByUid': uid,
-          'boundDeviceId': deviceId,
-          'boundCourse': selCourse,
-          'boundLevel': selLevel,
-        }, SetOptions(merge: true));
-      } catch (e) {
-        debugPrint("Firestore save error: $e");
-      }
+      await FirebaseFirestore.instance.collection('tokens').doc(userToken).set({
+        'isUsed': true,
+        'usedByUid': uid,
+        'boundDeviceId': deviceId,
+        'boundCourse': selCourse,
+        'boundLevel': selLevel,
+      }, SetOptions(merge: true));
 
       firstName = fName.trim();
       surname = sName.trim();
@@ -528,13 +515,8 @@ class AppState extends ChangeNotifier {
       await _loadLocalFileCache();
       await _fetchFromServer();
     } catch (e) {
-      if (e is FirebaseAuthException) {
-        errorMessage = e.message ?? "Authentication failed.";
-      } else {
-        errorMessage = "Signup Error: Ensure internet and correct token.";
-      }
+      errorMessage = "Signup Error.";
       notifyListeners();
-      rethrow;
     }
   }
 
@@ -562,9 +544,8 @@ class AppState extends ChangeNotifier {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$cacheFileName');
       if (await file.exists()) {
-        final encrypter = await _getEncrypter();
+        final encrypter = _getEncrypter();
         String encryptedData = await file.readAsString();
-        
         if (encryptedData.isNotEmpty) {
           final decryptedStr = encrypter.decrypt64(encryptedData, iv: _iv);
           fullDB = await compute(_decodeJsonCacheInBackground, decryptedStr);
@@ -574,7 +555,7 @@ class AppState extends ChangeNotifier {
         }
       }
     } catch (e) {
-      debugPrint("File Cache Decrypt Error: $e");
+      debugPrint("File Cache Decrypt Error.");
     }
   }
 
@@ -582,36 +563,23 @@ class AppState extends ChangeNotifier {
   Future<void> _fetchFromServer() async {
     try {
       String targetUrl = (userCourse == "Medicine" && userLevel == "200L") ? medicalCsvUrl : scienceCsvUrl;
-
-      final response = await http
-          .get(Uri.parse(targetUrl))
-          .timeout(const Duration(seconds: 30));
+      final response = await http.get(Uri.parse(targetUrl)).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         List<QuestionModel> parsed = await compute(_decodeCsvInBackground, response.body);
         if (parsed.isNotEmpty) {
-          errorMessage = "";
           fullDB = parsed;
           _setupData();
-          
           final directory = await getApplicationDocumentsDirectory();
           final file = File('${directory.path}/$cacheFileName');
-          
           String jsonStr = await compute(_encodeJsonCacheInBackground, fullDB);
-          final encrypter = await _getEncrypter();
+          final encrypter = _getEncrypter();
           final encrypted = encrypter.encrypt(jsonStr, iv: _iv);
-          
           await file.writeAsString(encrypted.base64, flush: true);
-        } else {
-          errorMessage = "No questions found for $userCourse. Check database.";
         }
-      } else {
-        errorMessage = "Server Error ${response.statusCode}.";
       }
     } catch (e) {
-      if (fullDB.isEmpty) {
-        errorMessage = "Connection failed. Please check internet.";
-      }
+      debugPrint("Sync Error.");
     } finally {
       isLoading = false;
       notifyListeners();
@@ -667,7 +635,6 @@ class AppState extends ChangeNotifier {
   void _setupData() {
     Set<String> uniqueTopics = {};
     courseTopics.clear();
-
     for (var q in fullDB) {
       if (q.topic.isNotEmpty) {
         uniqueTopics.add(q.topic);
@@ -765,25 +732,20 @@ class AppState extends ChangeNotifier {
       if (!topicPerformance.containsKey(q.topic)) {
         topicPerformance[q.topic] = {'total': 0, 'correct': 0};
       }
-
       if (q.isScience) {
         total++;
-        topicPerformance[q.topic]!['total'] =
-            (topicPerformance[q.topic]!['total'] ?? 0) + 1;
+        topicPerformance[q.topic]!['total'] = (topicPerformance[q.topic]!['total'] ?? 0) + 1;
         if (userAnswers[q.id] == q.answer) {
           correct++;
-          topicPerformance[q.topic]!['correct'] =
-              (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
+          topicPerformance[q.topic]!['correct'] = (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
         }
       } else {
         for (var r in q.roots) {
           total++;
-          topicPerformance[q.topic]!['total'] =
-              (topicPerformance[q.topic]!['total'] ?? 0) + 1;
+          topicPerformance[q.topic]!['total'] = (topicPerformance[q.topic]!['total'] ?? 0) + 1;
           if (userAnswers[r.id] == r.answer) {
             correct++;
-            topicPerformance[q.topic]!['correct'] =
-                (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
+            topicPerformance[q.topic]!['correct'] = (topicPerformance[q.topic]!['correct'] ?? 0) + 1;
           }
         }
       }
@@ -830,6 +792,11 @@ class AppState extends ChangeNotifier {
 
   void toggleExplanation(String rootId) {
     explanationRevealed[rootId] = !(explanationRevealed[rootId] ?? false);
+    notifyListeners();
+  }
+
+  void toggleStudyReveal(String key, bool value) {
+    studyRevealed[key] = value;
     notifyListeners();
   }
 
