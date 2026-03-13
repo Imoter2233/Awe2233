@@ -47,7 +47,9 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
         ..sort((a, b) => b.compareTo(a));
 
     List<String> courseTopics = app.courseTopics[courseCode]?.toList() ??[];
-    if (courseTopics.isEmpty) return;
+    if (courseTopics.isEmpty) {
+      return;
+    }
     String representativeTopic = courseTopics.first;
 
     showModalBottomSheet(
@@ -105,6 +107,28 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
             );
           });
         });
+  }
+
+  void _handleExamModeClick() {
+    List<String> activeCourses = widget.app.courseTopics.keys
+        .where((c) => widget.app.courseTopics[c]!.any((t) => widget.app.activeTopics.contains(t)))
+        .toList();
+
+    if (widget.app.activeTopics.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please select a Course Module first.", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: Colors.orange));
+      return;
+    }
+    if (activeCourses.length > 1) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please select topics from ONLY ONE course code for Exam Mode.", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: Colors.redAccent));
+      return;
+    }
+    if (activeCourses.isNotEmpty && activeCourses.first.toUpperCase().contains("BIO")) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Biology is not available for Exam Mode due to gap-fill complexity.", style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: Colors.redAccent));
+      return;
+    }
+
+    Navigator.pop(context);
+    _showExamTimeDialog(context, widget.app);
   }
 
   @override
@@ -354,7 +378,7 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               children:[
                 _buildDrawerItem(context, icon: Icons.menu_book_rounded, title: "Study Mode", onTap: () { app.exitExamMode(); Navigator.pop(context); }),
-                _buildDrawerItem(context, icon: Icons.timer_rounded, title: "Exam Mode", onTap: () { Navigator.pop(context); _showExamTimeDialog(context, app); }),
+                _buildDrawerItem(context, icon: Icons.timer_rounded, title: "Exam Mode", onTap: _handleExamModeClick),
                 _buildDrawerItem(context, icon: Icons.logout_rounded, title: "Log Out", subtitle: "Testing only", onTap: () { Navigator.pop(context); app.logOut(); }),
                 const Divider(height: 20),
                 Padding(padding: const EdgeInsets.only(left: 16, top: 10, bottom: 10), child: Text("APPEARANCE", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)))),
@@ -442,7 +466,6 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                                 collapsedIconColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
                                 title: Text(courseCode, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                 children:[
-                                  // SELECT ALL CHECKBOX
                                   CheckboxListTile(
                                     activeColor: Theme.of(context).colorScheme.primary,
                                     checkColor: app.isDarkMode ? Colors.black : Colors.white,
@@ -459,7 +482,6 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                                     }
                                   ),
                                   const Divider(height: 1),
-                                  // INDIVIDUAL TOPICS
                                   ...topics.map((t) {
                                     bool isSelected = tempFilters.contains(t);
                                     return CheckboxListTile(
@@ -565,7 +587,10 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
   @override
   void didUpdateWidget(covariant ScienceQuestionCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.isGloballyExpanded != widget.isGloballyExpanded) {
+    if (oldWidget.q.id != widget.q.id) {
+      _imgOpen = false;
+      _isLocallyExpanded = widget.isGloballyExpanded;
+    } else if (oldWidget.isGloballyExpanded != widget.isGloballyExpanded) {
       _isLocallyExpanded = widget.isGloballyExpanded;
     }
   }
@@ -695,10 +720,10 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
             duration: const Duration(milliseconds: 200),
             width: double.infinity,
             margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), 
             decoration: BoxDecoration(
                 color: bg,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: borderColor, width: 1.5)),
             child: Row(children:[
               Text("$letter. ", style: TextStyle(fontWeight: FontWeight.w900, color: textCol, fontSize: 15)),
@@ -712,16 +737,19 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
     Color primary = Theme.of(context).colorScheme.primary;
     bool showExplanation = widget.app.explanationRevealed[widget.q.id] ?? false;
 
+    String textToUse = widget.q.gapContent.isNotEmpty ? widget.q.gapContent : widget.q.stem;
+    bool isGapFill = textToUse.contains('[[');
+
     return Container(
       decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12), 
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children:[
+        children: [
           Row(children:[
-            Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: const Color(0xFFE0E7FF), borderRadius: BorderRadius.circular(6)), child: Text(widget.q.subject, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF4338CA)))),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFE0E7FF), borderRadius: BorderRadius.circular(6)), child: Text(widget.q.subject, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF4338CA)))),
             const Spacer(),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: const Color(0xFFF59E0B), borderRadius: BorderRadius.circular(6)), child: Text(widget.q.year, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold))),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFF59E0B), borderRadius: BorderRadius.circular(6)), child: Text(widget.q.year, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))),
           ]),
           const SizedBox(height: 10),
           
@@ -730,35 +758,35 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
                 onTap: () => setState(() => _imgOpen = !_imgOpen),
                 child: Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                        border: Border.all(color: primary, style: BorderStyle.solid, width: 2),
-                        borderRadius: BorderRadius.circular(12)),
+                        border: Border.all(color: primary, style: BorderStyle.solid, width: 1.5),
+                        borderRadius: BorderRadius.circular(10)),
                     alignment: Alignment.center,
                     child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children:[
-                          Icon(_imgOpen ? Icons.close : Icons.camera_alt, color: primary, size: 16),
+                          Icon(_imgOpen ? Icons.close : Icons.camera_alt, color: primary, size: 14),
                           const SizedBox(width: 8),
                           Text(_imgOpen ? "HIDE ATTACHMENT" : "VIEW CLINICAL ATTACHMENT",
-                              style: TextStyle(color: primary, fontWeight: FontWeight.w900, fontSize: 12))
+                              style: TextStyle(color: primary, fontWeight: FontWeight.w900, fontSize: 11))
                         ]))),
             if (_imgOpen) ...[
-              const SizedBox(height: 15),
+              const SizedBox(height: 10),
               CachedNetworkImage(
                 imageUrl: widget.q.imageUrl,
                 placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
                 errorWidget: (context, url, error) => const Icon(Icons.error, color: Colors.red),
                 imageBuilder: (context, imageProvider) => ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                     child: Image(image: imageProvider, fit: BoxFit.cover)),
               ),
             ],
             const SizedBox(height: 15),
           ],
           
-          if (widget.q.gapContent.isNotEmpty)
-            _buildGapFillText(widget.q.gapContent, widget.q.id, widget.app, context, isDark)
+          if (isGapFill)
+            _buildGapFillText(textToUse, widget.q.id, widget.app, context, isDark)
           else
             _buildMathText(widget.q.stem, context, isDark),
           
@@ -775,25 +803,31 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
             children:[
               if (!widget.app.isExamMode && widget.q.optionA.isNotEmpty)
                 Container(
+                  width: 32, height: 32, 
                   decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(8), border: Border.all(color: Theme.of(context).colorScheme.outline)),
                   child: IconButton(
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
                     icon: const Icon(Icons.list_alt_rounded),
                     color: showExplanation ? primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                     onPressed: () => widget.app.toggleExplanation(widget.q.id),
                   ),
                 ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               if (widget.q.optionA.isNotEmpty)
                 Container(
+                  width: 32, height: 32, 
                   decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(8), border: Border.all(color: Theme.of(context).colorScheme.outline)),
                   child: IconButton(
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
                     icon: Icon(_isLocallyExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
                     color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                     onPressed: () => setState(() => _isLocallyExpanded = !_isLocallyExpanded),
                   ),
                 ),
               const Spacer(),
-              Text(widget.q.topic, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), fontWeight: FontWeight.bold, fontSize: 11)),
+              Expanded(child: Text(widget.q.topic, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), fontWeight: FontWeight.bold, fontSize: 10))),
             ],
           ),
 
@@ -803,10 +837,10 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
             child: (!widget.app.isExamMode && showExplanation) ? Padding(
               padding: const EdgeInsets.only(top: 15),
               child: Container(
-                padding: const EdgeInsets.all(15),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF3F4F6),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                   border: const Border(left: BorderSide(color: Color(0xFF4C51BF), width: 4)),
                 ),
                 child: Column(
@@ -815,19 +849,19 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
                     const Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children:[
-                        Text("Verified Answer", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text("Verified Answer", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 11)),
                         Row(
                           children:[
-                            Icon(Icons.smart_toy_rounded, size: 14, color: Color(0xFF4C51BF)),
+                            Icon(Icons.smart_toy_rounded, size: 12, color: Color(0xFF4C51BF)),
                             SizedBox(width: 4),
-                            Text("ASK AWE AI", style: TextStyle(color: Color(0xFF4C51BF), fontWeight: FontWeight.w900, fontSize: 11)),
+                            Text("ASK AWE AI", style: TextStyle(color: Color(0xFF4C51BF), fontWeight: FontWeight.w900, fontSize: 10)),
                           ],
                         )
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    Text("Option ${widget.q.answer}", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
+                    Text("Option ${widget.q.answer}", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+                    const SizedBox(height: 8),
                     _buildMathText(widget.q.explanation, context, isDark),
                   ],
                 ),
@@ -854,7 +888,7 @@ class _ScienceResultScreenState extends State<ScienceResultScreen> {
   void initState() {
     super.initState();
     _confettiController = ConfettiController(duration: const Duration(seconds: 3));
-    if (widget.app.finalScore >= 70) _confettiController.play();
+    if (widget.app.finalScore == 100) _confettiController.play();
   }
 
   @override
@@ -887,6 +921,8 @@ class _ScienceResultScreenState extends State<ScienceResultScreen> {
                   ),
                   Container(height: 70, width: double.infinity, alignment: Alignment.centerLeft, padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)), child: Text(passed ? "EVALUATION: Mastery Achieved." : "EVALUATION: Needs Practice.", style: const TextStyle(fontWeight: FontWeight.bold))),
                   const Spacer(),
+                  SizedBox(width: double.infinity, height: 55, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ScienceReviewScreen(app: widget.app))), child: const Text("REVIEW TOPICS", style: TextStyle(fontWeight: FontWeight.bold)))),
+                  const SizedBox(height: 20),
                   SizedBox(width: double.infinity, height: 55, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.onSurface, foregroundColor: Theme.of(context).colorScheme.surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () { widget.app.exitExamMode(); Navigator.pop(context); }, child: const Text("RETURN TO STUDY", style: TextStyle(fontWeight: FontWeight.bold)))),
                 ],
               ),
@@ -900,6 +936,307 @@ class _ScienceResultScreenState extends State<ScienceResultScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// --- SCIENCE REVIEW DASHBOARD ---
+class ScienceReviewScreen extends StatelessWidget {
+  final AppState app;
+  const ScienceReviewScreen({super.key, required this.app});
+
+  @override
+  Widget build(BuildContext context) {
+    var topics = app.topicPerformance.entries.toList();
+    return Scaffold(
+        body: SafeArea(
+      child: Column(
+        children:[
+          SizedBox(height: 50, child: Row(children:[IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), const Text("TOPIC BREAKDOWN", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))])),
+          Expanded(
+            child: NotificationListener<ScrollUpdateNotification>(
+              onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+              child: ListView.separated(
+                physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(20), itemCount: topics.length, separatorBuilder: (_, __) => const SizedBox(height: 15),
+                itemBuilder: (ctx, i) {
+                  String topic = topics[i].key; int total = topics[i].value['total']!; int correct = topics[i].value['correct']!; int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
+                  Color color = pct >= 80 ? const Color(0xFF10B981) : (pct >= 50 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
+                  IconData icon = pct >= 80 ? Icons.check_circle : (pct >= 50 ? Icons.error : Icons.cancel);
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ScienceDetailedReviewScreen(app: app, topic: topic))),
+                      child: Container(
+                        padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
+                        child: Row(children:[Icon(icon, color: color, size: 28), const SizedBox(width: 15), Expanded(child: Text(topic, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))), Text("$pct%", style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(width: 10), Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3))]),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    ));
+  }
+}
+
+// --- SCIENCE PAGINATED DETAILED REVIEW ---
+class ScienceDetailedReviewScreen extends StatefulWidget {
+  final AppState app;
+  final String topic;
+  const ScienceDetailedReviewScreen({super.key, required this.app, required this.topic});
+
+  @override
+  State<ScienceDetailedReviewScreen> createState() => _ScienceDetailedReviewScreenState();
+}
+
+class _ScienceDetailedReviewScreenState extends State<ScienceDetailedReviewScreen> {
+  final ScrollController _reviewPageScrollController = ScrollController();
+  int _localCurrentPage = 1;
+  final int _localItemsPerPage = 5;
+  late List<QuestionModel> _topicQuestions;
+
+  @override
+  void initState() {
+    super.initState();
+    _topicQuestions = widget.app.filteredDB.where((q) => q.topic == widget.topic).toList();
+  }
+
+  @override
+  void dispose() {
+    _reviewPageScrollController.dispose();
+    super.dispose();
+  }
+
+  void _changePage(int newPage) {
+    setState(() { _localCurrentPage = newPage; });
+    if (_reviewPageScrollController.hasClients) {
+      double offset = (newPage - 1) * 44.0;
+      _reviewPageScrollController.animateTo(
+        offset, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    int totalPages = (_topicQuestions.length / _localItemsPerPage).ceil();
+    if (totalPages == 0) {
+      totalPages = 1;
+    }
+
+    int startIdx = (_localCurrentPage - 1) * _localItemsPerPage;
+    int endIdx = math.min(startIdx + _localItemsPerPage, _topicQuestions.length);
+    List<QuestionModel> pageItems = _topicQuestions.isEmpty ?[] : _topicQuestions.sublist(startIdx, endIdx);
+
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children:[
+            Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outline))), child: Row(children:[IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), Expanded(child: Text(widget.topic, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis))])),
+            Expanded(
+              child: NotificationListener<ScrollUpdateNotification>(
+                onNotification: (notif) { widget.app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                child: ListView.builder(
+                  physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
+                  itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: ScienceReviewQuestionCard(q: pageItems[i], app: widget.app)),
+                ),
+              ),
+            ),
+            if (totalPages > 1)
+              Container(
+                height: 60, padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children:[
+                    IconButton(icon: const Icon(Icons.chevron_left), onPressed: _localCurrentPage > 1 ? () => _changePage(_localCurrentPage - 1) : null),
+                    Expanded(
+                        child: NotificationListener<ScrollUpdateNotification>(
+                      onNotification: (notif) { widget.app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                      child: ListView.builder(
+                          controller: _reviewPageScrollController, scrollDirection: Axis.horizontal, itemCount: totalPages,
+                          itemBuilder: (context, index) {
+                            int page = index + 1; bool isActive = page == _localCurrentPage;
+                            return GestureDetector(
+                              onTap: () => _changePage(page),
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 12), width: 36, alignment: Alignment.center,
+                                decoration: BoxDecoration(color: isActive ? Theme.of(context).colorScheme.primary : Colors.transparent, borderRadius: BorderRadius.circular(10)),
+                                child: Text("$page", style: TextStyle(fontWeight: FontWeight.bold, color: isActive ? (widget.app.isDarkMode ? Colors.black : Colors.white) : Theme.of(context).colorScheme.onSurface)),
+                              ),
+                            );
+                          }),
+                    )),
+                    IconButton(icon: const Icon(Icons.chevron_right), onPressed: _localCurrentPage < totalPages ? () => _changePage(_localCurrentPage + 1) : null),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ScienceReviewQuestionCard extends StatelessWidget {
+  final QuestionModel q;
+  final AppState app;
+  const ScienceReviewQuestionCard({super.key, required this.q, required this.app});
+
+  Widget _buildMathText(String text, BuildContext context, bool isDark, {Color? overrideColor}) {
+    Color textColor = overrideColor ?? Theme.of(context).colorScheme.onSurface;
+    List<Widget> spans =[];
+    final regex = RegExp(r'\$\$(.*?)\$\$|\$(.*?)\$', dotAll: true);
+    int lastMatchEnd = 0;
+
+    for (var match in regex.allMatches(text)) {
+      if (match.start > lastMatchEnd) {
+        spans.add(Text(text.substring(lastMatchEnd, match.start), style: TextStyle(fontSize: 15, color: textColor, height: 1.4, fontWeight: FontWeight.bold)));
+      }
+      String mathExpr = match.group(1) ?? match.group(2) ?? '';
+      spans.add(SingleChildScrollView(scrollDirection: Axis.horizontal, child: Math.tex(mathExpr, textStyle: TextStyle(fontSize: 15, color: textColor), mathStyle: MathStyle.display, onErrorFallback: (err) => Text(mathExpr, style: const TextStyle(color: Colors.red)))));
+      lastMatchEnd = match.end;
+    }
+    if (lastMatchEnd < text.length) {
+      spans.add(Text(text.substring(lastMatchEnd), style: TextStyle(fontSize: 15, color: textColor, height: 1.4, fontWeight: FontWeight.bold)));
+    }
+    return Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: spans);
+  }
+
+  Widget _buildReviewOption(String letter, String text, BuildContext context, bool isDark) {
+    String userAns = app.userAnswers[q.id] ?? "";
+    String actualAns = q.answer;
+    
+    bool isCorrectAnswer = letter == actualAns;
+    bool isUserWrongAnswer = letter == userAns && userAns != actualAns;
+
+    Color bg = Theme.of(context).colorScheme.surface;
+    Color textCol = Theme.of(context).colorScheme.onSurface;
+    Color borderColor = Theme.of(context).colorScheme.outline;
+    
+    Color badgeColor = Colors.transparent; Color badgeTextColor = Colors.white; String badgeText = ""; IconData? badgeIcon;
+
+    if (isCorrectAnswer) {
+      bg = const Color(0xFF10B981); 
+      textCol = Colors.white;
+      borderColor = bg;
+      badgeColor = Colors.white.withValues(alpha: 0.2); badgeTextColor = Colors.white; badgeText = "CORRECT ANSWER"; badgeIcon = Icons.check;
+    } else if (isUserWrongAnswer) {
+      bg = const Color(0xFFEF4444); 
+      textCol = Colors.white;
+      borderColor = bg;
+      badgeColor = Colors.white.withValues(alpha: 0.2); badgeTextColor = Colors.white; badgeText = "YOU CHOSE"; badgeIcon = Icons.close;
+    }
+
+    return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8), border: Border.all(color: borderColor, width: 1.5)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children:[
+              Text("$letter. ", style: TextStyle(fontWeight: FontWeight.w900, color: textCol, fontSize: 15)),
+              Expanded(child: _buildMathText(text, context, isDark, overrideColor: textCol))
+            ]),
+            if (isCorrectAnswer || isUserWrongAnswer) ...[
+              const SizedBox(height: 6),
+              Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: badgeColor, borderRadius: BorderRadius.circular(4)), child: Row(mainAxisSize: MainAxisSize.min, children:[Icon(badgeIcon, size: 12, color: badgeTextColor), const SizedBox(width: 4), Text(badgeText, style: TextStyle(color: badgeTextColor, fontSize: 10, fontWeight: FontWeight.bold))]))
+            ]
+          ],
+        ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    bool isDark = app.isDarkMode;
+    Color primary = Theme.of(context).colorScheme.primary;
+    bool showExplanation = app.explanationRevealed[q.id] ?? false;
+
+    return Container(
+      decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outline)),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children:[
+          Row(children:[
+            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFE0E7FF), borderRadius: BorderRadius.circular(6)), child: Text(q.subject, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF4338CA)))),
+            const Spacer(),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFF59E0B), borderRadius: BorderRadius.circular(6)), child: Text(q.year, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))),
+          ]),
+          const SizedBox(height: 10),
+          
+          if (q.imageUrl.isNotEmpty) ...[
+            CachedNetworkImage(
+              imageUrl: q.imageUrl,
+              placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
+              errorWidget: (context, url, error) => const Icon(Icons.error, color: Colors.red),
+              imageBuilder: (context, imageProvider) => ClipRRect(borderRadius: BorderRadius.circular(10), child: Image(image: imageProvider, fit: BoxFit.cover)),
+            ),
+            const SizedBox(height: 15),
+          ],
+          
+          _buildMathText(q.stem, context, isDark),
+          
+          const SizedBox(height: 15),
+          if (q.optionA.isNotEmpty) ...[
+            _buildReviewOption('A', q.optionA, context, isDark),
+            _buildReviewOption('B', q.optionB, context, isDark),
+            _buildReviewOption('C', q.optionC, context, isDark),
+            _buildReviewOption('D', q.optionD, context, isDark),
+          ],
+
+          const SizedBox(height: 10),
+          Row(
+            children:[
+              if (q.optionA.isNotEmpty)
+                Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(8), border: Border.all(color: Theme.of(context).colorScheme.outline)),
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
+                    icon: const Icon(Icons.list_alt_rounded),
+                    color: showExplanation ? primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                    onPressed: () => app.toggleExplanation(q.id),
+                  ),
+                ),
+              const Spacer(),
+              Expanded(child: Text(q.topic, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), fontWeight: FontWeight.bold, fontSize: 10))),
+            ],
+          ),
+
+          AnimatedSize(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            child: showExplanation ? Padding(
+              padding: const EdgeInsets.only(top: 15),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(10), border: const Border(left: BorderSide(color: Color(0xFF4C51BF), width: 4))),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children:[
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children:[
+                        Text("Verified Answer", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 11)),
+                        Row(children:[Icon(Icons.smart_toy_rounded, size: 12, color: Color(0xFF4C51BF)), SizedBox(width: 4), Text("ASK AWE AI", style: TextStyle(color: Color(0xFF4C51BF), fontWeight: FontWeight.w900, fontSize: 10))])
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text("Option ${q.answer}", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+                    const SizedBox(height: 8),
+                    _buildMathText(q.explanation, context, isDark),
+                  ],
+                ),
+              ),
+            ) : const SizedBox.shrink(),
+          )
+        ]
+      )
     );
   }
 }

@@ -10,7 +10,6 @@ import 'package:http/http.dart' as http;
 import 'package:csv/csv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:encrypt/encrypt.dart' as encrypt_pkg;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -29,7 +28,7 @@ const String colorIndexKey = "synapse_color_index";
 const String soundPrefKey = "synapse_sound_pref";
 const String volumePrefKey = "synapse_volume_pref";
 const String firstRunKey = "synapse_first_run";
-const String cacheFileName = "synapse_vault.aes"; 
+const String cacheFileName = "synapse_offline_db.json"; 
 const String lastSyncKey = "synapse_last_sync_time";
 
 const String isLoggedInKey = "synapse_is_logged_in";
@@ -44,7 +43,7 @@ const String welcomeSeenKey = "synapse_welcome_seen";
 
 // --- BACKGROUND ISOLATE PARSERS ---
 List<QuestionModel> _decodeCsvInBackground(String csvText) {
-  List<QuestionModel> newDB = [];
+  List<QuestionModel> newDB =[];
   try {
     String cleanCsv = csvText.replaceAll(RegExp(r'^\xEF\xBB\xBF|\uFEFF'), '');
     cleanCsv = cleanCsv.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
@@ -119,36 +118,17 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
   return newDB;
 }
 
-// --- ISOLATE ENCRYPTION & DECRYPTION (Prevents Main Thread Locks) ---
-String _encryptAndEncodeInBackground(Map<String, dynamic> args) {
-  final dataList = args['data'] as List<dynamic>; 
-  final rawKeyStr = args['key'] as String;
-
-  final key = encrypt_pkg.Key.fromUtf8(rawKeyStr);
-  final iv = encrypt_pkg.IV.fromLength(16);
-  final encrypter = encrypt_pkg.Encrypter(encrypt_pkg.AES(key, mode: encrypt_pkg.AESMode.cbc));
-
-  final jsonStr = jsonEncode(dataList);
-  final encrypted = encrypter.encrypt(jsonStr, iv: iv);
-  
-  return encrypted.base64;
-}
-
-List<dynamic> _decryptAndDecodeInBackground(Map<String, dynamic> args) {
+List<QuestionModel> _decodeJsonCacheInBackground(String jsonStr) {
   try {
-    final encryptedData = args['data'] as String;
-    final rawKeyStr = args['key'] as String;
-
-    final key = encrypt_pkg.Key.fromUtf8(rawKeyStr);
-    final iv = encrypt_pkg.IV.fromLength(16);
-    final encrypter = encrypt_pkg.Encrypter(encrypt_pkg.AES(key, mode: encrypt_pkg.AESMode.cbc));
-
-    final decryptedStr = encrypter.decrypt64(encryptedData, iv: iv);
-    return jsonDecode(decryptedStr) as List<dynamic>;
+    List<dynamic> parsed = jsonDecode(jsonStr);
+    return parsed.map((e) => QuestionModel.fromJson(e)).toList();
   } catch (e) {
-    debugPrint("Background Decrypt Error: $e");
     return[];
   }
+}
+
+String _encodeJsonCacheInBackground(List<QuestionModel> data) {
+  return jsonEncode(data.map((e) => e.toJson()).toList());
 }
 
 // --- APP STATE MANAGER ---
@@ -175,10 +155,10 @@ class AppState extends ChangeNotifier {
   String errorMessage = "";
 
   List<QuestionModel> fullDB =[];
-  List<QuestionModel> filteredDB = [];
+  List<QuestionModel> filteredDB =[];
   String searchText = "";
   
-  List<String> activeTopics =[];
+  List<String> activeTopics = [];
   List<String> allTopics =[];
   Map<String, List<String>> activeTopicYears = {};
   Map<String, Set<String>> courseTopics = {}; 
@@ -249,16 +229,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  String _generateRawKey() {
-    String rawKey = "${userToken}_SYNAPSE_SECURE_VAULT_2026";
-    if (rawKey.length < 32) {
-      rawKey = rawKey.padRight(32, 'X');
-    } else if (rawKey.length > 32) {
-      rawKey = rawKey.substring(0, 32);
-    }
-    return rawKey;
-  }
-
+  // --- SECURITY: GLOBAL TIME ---
   Future<DateTime?> _getGlobalTime() async {
     try {
       final response = await http
@@ -282,12 +253,15 @@ class AppState extends ChangeNotifier {
         DateTime lastSyncDate = DateTime.fromMillisecondsSinceEpoch(lastSync);
         DateTime localTime = DateTime.now();
 
+        // Time Travel Check
         if (localTime.isBefore(lastSyncDate.subtract(const Duration(minutes: 5)))) {
           await _executeRemoteWipe("Security Alert: System time tampering detected.");
           return false;
         }
 
+        // ==============================================================
         // 🚨 30 MINUTES OFFLINE LOCKOUT 🚨
+        // ==============================================================
         if (localTime.difference(lastSyncDate).inMinutes > 30) {
           errorMessage = "Security Lock: 30-Min Limit Reached. Connect to internet.";
           isLockedOut = true;
@@ -337,12 +311,8 @@ class AppState extends ChangeNotifier {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$cacheFileName');
-      final tmpFile = File('${directory.path}/$cacheFileName.tmp');
       if (await file.exists()) {
         await file.delete();
-      }
-      if (await tmpFile.exists()) {
-        await tmpFile.delete();
       }
     } catch (e) {
       debugPrint("Wipe error: $e");
@@ -549,32 +519,24 @@ class AppState extends ChangeNotifier {
     await _executeRemoteWipe("Logged out.");
   }
 
-  // ISOLATE DECRYPTION READ
   Future<void> _loadLocalFileCache() async {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$cacheFileName');
       if (await file.exists()) {
-        String encryptedData = await file.readAsString();
-        if (encryptedData.isNotEmpty) {
-          final rawData = await compute(_decryptAndDecodeInBackground, {
-            'data': encryptedData,
-            'key': _generateRawKey()
-          });
-          if (rawData.isNotEmpty) {
-            fullDB = rawData.map((e) => QuestionModel.fromJson(e as Map<String, dynamic>)).toList();
-            _setupData();
-            isLoading = false;
-            notifyListeners();
-          }
+        String jsonStr = await file.readAsString();
+        if (jsonStr.isNotEmpty) {
+          fullDB = await compute(_decodeJsonCacheInBackground, jsonStr);
+          _setupData();
+          isLoading = false;
+          notifyListeners();
         }
       }
     } catch (e) {
-      debugPrint("File Cache Decrypt Error: $e");
+      debugPrint("File Cache Read Error: $e");
     }
   }
 
-  // ISOLATE ENCRYPTION ATOMIC WRITE
   Future<void> _fetchFromServer() async {
     try {
       String targetUrl = (userCourse == "Medicine" && userLevel == "200L") ? medicalCsvUrl : scienceCsvUrl;
@@ -588,17 +550,9 @@ class AppState extends ChangeNotifier {
           
           final directory = await getApplicationDocumentsDirectory();
           final file = File('${directory.path}/$cacheFileName');
-          final tmpFile = File('${directory.path}/$cacheFileName.tmp');
-
-          // Atomic Cache Process
-          final rawData = fullDB.map((e) => e.toJson()).toList();
-          String encryptedBase64 = await compute(_encryptAndEncodeInBackground, {
-            'data': rawData,
-            'key': _generateRawKey()
-          });
-
-          await tmpFile.writeAsString(encryptedBase64, flush: true);
-          await tmpFile.rename(file.path); 
+          
+          String jsonStr = await compute(_encodeJsonCacheInBackground, fullDB);
+          await file.writeAsString(jsonStr, flush: true);
         }
       }
     } catch (e) {
@@ -708,7 +662,7 @@ class AppState extends ChangeNotifier {
   }
 
   void toggleYearForTopic(String topic, String year) {
-    activeTopicYears.putIfAbsent(topic, () =>[]);
+    activeTopicYears.putIfAbsent(topic, () => []);
     if (activeTopicYears[topic]!.contains(year)) {
       activeTopicYears[topic]!.remove(year);
     } else {

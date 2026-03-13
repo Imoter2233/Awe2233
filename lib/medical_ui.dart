@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:confetti/confetti.dart';
 import 'app_state.dart';
 import 'models.dart';
 
@@ -53,7 +54,10 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                   Padding(padding: const EdgeInsets.all(16.0), child: Text("Filter Years for $topic", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
                   Flexible(
                     child: NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                      onNotification: (notif) { 
+                        app.trackScrollTick(notif.scrollDelta ?? 0); 
+                        return false; 
+                      },
                       child: ListView(
                         shrinkWrap: true, physics: const BouncingScrollPhysics(),
                         children:[
@@ -61,7 +65,12 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                             checkColor: app.isDarkMode ? Colors.black : Colors.white,
                             title: Text("All Years", style: TextStyle(fontWeight: isAllYears ? FontWeight.bold : FontWeight.normal)),
                             value: isAllYears,
-                            onChanged: (bool? value) { if (value == true) { app.clearYearsForTopic(topic); setModalState(() {}); } },
+                            onChanged: (bool? value) { 
+                              if (value == true) { 
+                                app.clearYearsForTopic(topic); 
+                                setModalState(() {}); 
+                              } 
+                            },
                           ),
                           const Divider(height: 1),
                           ...availableYears.map((year) {
@@ -70,7 +79,10 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                               checkColor: app.isDarkMode ? Colors.black : Colors.white,
                               title: Text(year, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
                               value: isSelected,
-                              onChanged: (bool? value) { app.toggleYearForTopic(topic, year); setModalState(() {}); },
+                              onChanged: (bool? value) { 
+                                app.toggleYearForTopic(topic, year); 
+                                setModalState(() {}); 
+                              },
                             );
                           }),
                         ],
@@ -162,7 +174,10 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(22.5), borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 1.5)),
                           contentPadding: EdgeInsets.zero,
                         ),
-                        onChanged: (val) { app.searchText = val; app.applyFilters(); },
+                        onChanged: (val) { 
+                          app.searchText = val; 
+                          app.applyFilters(); 
+                        },
                       ),
                     ),
                   ),
@@ -174,7 +189,7 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                 width: double.infinity, margin: const EdgeInsets.all(15), padding: const EdgeInsets.all(15),
                 decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3))),
                 child: Row(
-                  children:[
+                  children: [
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -185,7 +200,16 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                         ],
                       ),
                     ),
-                    IconButton(icon: const Icon(Icons.close, size: 24), color: Theme.of(context).colorScheme.primary, onPressed: () { setState(() => _showBanner = false); app.markWelcomeSeen(); })
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 24), 
+                      color: Theme.of(context).colorScheme.primary, 
+                      onPressed: () { 
+                        setState(() {
+                          _showBanner = false;
+                        }); 
+                        app.markWelcomeSeen(); 
+                      }
+                    )
                   ],
                 ),
               ),
@@ -231,7 +255,10 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
               child: app.filteredDB.isEmpty
                   ? Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text(app.errorMessage.isNotEmpty ? app.errorMessage : "No questions match your criteria.", textAlign: TextAlign.center, style: TextStyle(color: app.errorMessage.isNotEmpty ? Colors.redAccent : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 16))))
                   : NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                      onNotification: (notif) { 
+                        app.trackScrollTick(notif.scrollDelta ?? 0); 
+                        return false; 
+                      },
                       child: ListView.builder(
                         physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
                         itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: MedicalQuestionCard(q: pageItems[i], app: app)),
@@ -246,11 +273,15 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                     IconButton(icon: const Icon(Icons.chevron_left), onPressed: app.currentPage > 1 ? () => _changePage(app.currentPage - 1) : null),
                     Expanded(
                         child: NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                      onNotification: (notif) { 
+                        app.trackScrollTick(notif.scrollDelta ?? 0); 
+                        return false; 
+                      },
                       child: ListView.builder(
                           controller: _pageScrollController, scrollDirection: Axis.horizontal, itemCount: app.totalPages,
                           itemBuilder: (context, index) {
-                            int page = index + 1; bool isActive = page == app.currentPage;
+                            int page = index + 1; 
+                            bool isActive = page == app.currentPage;
                             return GestureDetector(
                               onTap: () => _changePage(page),
                               child: Container(
@@ -272,7 +303,8 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
   }
 
   String _formatTime(int seconds) {
-    int m = seconds ~/ 60; int s = seconds % 60;
+    int m = seconds ~/ 60; 
+    int s = seconds % 60;
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
@@ -289,7 +321,7 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children:[
-                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, shape: BoxShape.circle, boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)]), child: Icon(Icons.psychology, size: 40, color: Theme.of(context).colorScheme.primary)),
+                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, shape: BoxShape.circle, boxShadow: const[BoxShadow(color: Colors.black12, blurRadius: 10)]), child: Icon(Icons.psychology, size: 40, color: Theme.of(context).colorScheme.primary)),
                 const SizedBox(height: 16),
                 Text("${app.firstName} ${app.surname}", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface), maxLines: 1, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 5),
@@ -301,7 +333,10 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                       Text("ID: ${app.uniqueId}", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(width: 5),
                       GestureDetector(
-                        onTap: () { Clipboard.setData(ClipboardData(text: app.uniqueId)); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID Copied!"))); },
+                        onTap: () { 
+                          Clipboard.setData(ClipboardData(text: app.uniqueId)); 
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID Copied!"))); 
+                        },
                         child: Icon(Icons.copy, size: 14, color: Theme.of(context).colorScheme.primary),
                       )
                     ],
@@ -315,9 +350,18 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               children:[
-                _buildDrawerItem(context, icon: Icons.menu_book_rounded, title: "Study Mode", onTap: () { app.exitExamMode(); Navigator.pop(context); }),
-                _buildDrawerItem(context, icon: Icons.timer_rounded, title: "Exam Mode", onTap: () { Navigator.pop(context); _showExamTimeDialog(context, app); }),
-                _buildDrawerItem(context, icon: Icons.logout_rounded, title: "Log Out", subtitle: "Testing only", onTap: () { Navigator.pop(context); app.logOut(); }),
+                _buildDrawerItem(context, icon: Icons.menu_book_rounded, title: "Study Mode", onTap: () { 
+                  app.exitExamMode(); 
+                  Navigator.pop(context); 
+                }),
+                _buildDrawerItem(context, icon: Icons.timer_rounded, title: "Exam Mode", onTap: () { 
+                  Navigator.pop(context); 
+                  _showExamTimeDialog(context, app); 
+                }),
+                _buildDrawerItem(context, icon: Icons.logout_rounded, title: "Log Out", subtitle: "Testing only", onTap: () { 
+                  Navigator.pop(context); 
+                  app.logOut(); 
+                }),
                 const Divider(height: 20),
                 Padding(padding: const EdgeInsets.only(left: 16, top: 10, bottom: 10), child: Text("APPEARANCE", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)))),
                 Padding(
@@ -384,15 +428,27 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                     children:[
                       Expanded(
                           child: NotificationListener<ScrollUpdateNotification>(
-                        onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                        onNotification: (notif) { 
+                          app.trackScrollTick(notif.scrollDelta ?? 0); 
+                          return false; 
+                        },
                         child: ListView.builder(
                             padding: const EdgeInsets.symmetric(vertical: 10), itemCount: app.allTopics.length,
                             itemBuilder: (c, i) {
-                              String t = app.allTopics[i]; bool isSelected = tempFilters.contains(t);
+                              String t = app.allTopics[i]; 
+                              bool isSelected = tempFilters.contains(t);
                               return ListTile(
                                 title: Text(t, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
                                 trailing: Icon(isSelected ? Icons.check_circle : Icons.radio_button_unchecked, color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)),
-                                onTap: () => setState(() => isSelected ? tempFilters.remove(t) : tempFilters.add(t)),
+                                onTap: () {
+                                  setState(() {
+                                    if (isSelected) {
+                                      tempFilters.remove(t);
+                                    } else {
+                                      tempFilters.add(t);
+                                    }
+                                  });
+                                }
                               );
                             }),
                       )),
@@ -400,9 +456,31 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                         height: 60, padding: const EdgeInsets.symmetric(horizontal: 10),
                         child: Row(
                           children:[
-                            Expanded(child: TextButton(style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3), foregroundColor: Theme.of(context).colorScheme.onSurface), onPressed: () { setState(() => tempFilters.clear()); app.activeTopicYears.clear(); app.applyFiltersWith(tempFilters); Navigator.pop(ctx); }, child: const Text("RESET", style: TextStyle(fontWeight: FontWeight.bold)))),
+                            Expanded(
+                              child: TextButton(
+                                style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3), foregroundColor: Theme.of(context).colorScheme.onSurface), 
+                                onPressed: () { 
+                                  setState(() {
+                                    tempFilters.clear();
+                                  }); 
+                                  app.activeTopicYears.clear(); 
+                                  app.applyFiltersWith(tempFilters); 
+                                  Navigator.pop(ctx); 
+                                }, 
+                                child: const Text("RESET", style: TextStyle(fontWeight: FontWeight.bold))
+                              )
+                            ),
                             const SizedBox(width: 10),
-                            Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: app.isDarkMode ? Colors.black : Colors.white), onPressed: () { app.applyFiltersWith(tempFilters); Navigator.pop(ctx); }, child: const Text("APPLY", style: TextStyle(fontWeight: FontWeight.bold))))
+                            Expanded(
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: app.isDarkMode ? Colors.black : Colors.white), 
+                                onPressed: () { 
+                                  app.applyFiltersWith(tempFilters); 
+                                  Navigator.pop(ctx); 
+                                }, 
+                                child: const Text("APPLY", style: TextStyle(fontWeight: FontWeight.bold))
+                              )
+                            )
                           ],
                         ),
                       )
@@ -414,7 +492,8 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
   }
 
   void _showExamTimeDialog(BuildContext context, AppState app) {
-    int selectedHour = 0; int selectedMin = 10;
+    int selectedHour = 0; 
+    int selectedMin = 10;
     showDialog(
         context: context,
         builder: (ctx) => StatefulBuilder(builder: (context, setState) {
@@ -430,7 +509,12 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                               Expanded(
                                 child: ListWheelScrollView.useDelegate(
                                     itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
-                                    onSelectedItemChanged: (v) { app.playScrollSound(); setState(() => selectedHour = v); },
+                                    onSelectedItemChanged: (v) { 
+                                      app.playScrollSound(); 
+                                      setState(() {
+                                        selectedHour = v;
+                                      }); 
+                                    },
                                     childDelegate: ListWheelChildBuilderDelegate(childCount: 13, builder: (ctx, i) => Center(child: Text("$i".padLeft(2, '0'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: selectedHour == i ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)))))),
                               ),
                             ],
@@ -443,14 +527,31 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                               Expanded(
                                 child: ListWheelScrollView.useDelegate(
                                     itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005, controller: FixedExtentScrollController(initialItem: 10),
-                                    onSelectedItemChanged: (v) { app.playScrollSound(); setState(() => selectedMin = v); },
+                                    onSelectedItemChanged: (v) { 
+                                      app.playScrollSound(); 
+                                      setState(() {
+                                        selectedMin = v;
+                                      }); 
+                                    },
                                     childDelegate: ListWheelChildBuilderDelegate(childCount: 60, builder: (ctx, val) { return Center(child: Text("$val".padLeft(2, '0'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: selectedMin == val ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)))); })),
                               ),
                             ],
                           ),
                         )
                       ])),
-                  actions:[TextButton(onPressed: () { int totalMins = selectedHour * 60 + selectedMin; if (totalMins == 0) totalMins = 1; app.startExam(totalMins); Navigator.pop(ctx); }, child: Text("START", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 16)))]);
+                  actions:[
+                    TextButton(
+                      onPressed: () { 
+                        int totalMins = selectedHour * 60 + selectedMin; 
+                        if (totalMins == 0) {
+                          totalMins = 1; 
+                        }
+                        app.startExam(totalMins); 
+                        Navigator.pop(ctx); 
+                      }, 
+                      child: Text("START", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 16))
+                    )
+                  ]);
             }));
   }
 }
@@ -504,17 +605,23 @@ class MedicalRootWidget extends StatelessWidget {
     String userAns = app.userAnswers[r.id] ?? "";
     bool showExp = app.explanationRevealed[r.id] ?? false;
 
-    Color dotBg = Colors.transparent; Color dotBorder = Theme.of(context).colorScheme.outline;
-    Color dotTextColor = Theme.of(context).colorScheme.onSurface; String dotText = "•";
+    Color dotBg = Colors.transparent; 
+    Color dotBorder = Theme.of(context).colorScheme.outline;
+    Color dotTextColor = Theme.of(context).colorScheme.onSurface; 
+    String dotText = "•";
 
     if (app.isExamMode) {
       if (userAns == "T" || userAns == "F") {
-        dotText = userAns; dotBg = userAns == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
-        dotBorder = dotBg; dotTextColor = Colors.white;
+        dotText = userAns; 
+        dotBg = userAns == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
+        dotBorder = dotBg; 
+        dotTextColor = Colors.white;
       }
     } else if (isRevealed) {
-      dotText = r.answer; dotBg = r.answer == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
-      dotBorder = dotBg; dotTextColor = Colors.white;
+      dotText = r.answer; 
+      dotBg = r.answer == "T" ? const Color(0xFF10B981) : const Color(0xFFEF4444);
+      dotBorder = dotBg; 
+      dotTextColor = Colors.white;
     }
 
     return Column(
@@ -544,36 +651,88 @@ class MedicalRootWidget extends StatelessWidget {
 }
 
 // ----------------------------------------------------------------------------
-class MedicalResultScreen extends StatelessWidget {
+class MedicalResultScreen extends StatefulWidget {
   final AppState app;
   const MedicalResultScreen({super.key, required this.app});
 
   @override
+  State<MedicalResultScreen> createState() => _MedicalResultScreenState();
+}
+
+class _MedicalResultScreenState extends State<MedicalResultScreen> {
+  late ConfettiController _confettiController;
+  
+  @override
+  void initState() {
+    super.initState();
+    _confettiController = ConfettiController(duration: const Duration(seconds: 3));
+    if (widget.app.finalScore == 100) {
+      _confettiController.play();
+    }
+  }
+
+  @override
+  void dispose() {
+    _confettiController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    bool passed = app.finalScore >= 70;
+    bool passed = widget.app.finalScore >= 70;
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(30),
-          child: Column(
-            children:[
-              const SizedBox(height: 50, child: Text("CLINICAL EVALUATION", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
-              SizedBox(
-                height: 220,
-                child: Stack(alignment: Alignment.center, children:[
-                  TweenAnimationBuilder<double>(
-                      tween: Tween<double>(begin: 0, end: app.finalScore / 100), duration: const Duration(seconds: 2), curve: Curves.easeOutCubic,
-                      builder: (context, value, child) { return SizedBox(width: 150, height: 150, child: CircularProgressIndicator(value: value, strokeWidth: 14, backgroundColor: Theme.of(context).colorScheme.outline, color: passed ? const Color(0xFF10B981) : const Color(0xFFEF4444))); }),
-                  Text("${app.finalScore}%", style: const TextStyle(fontSize: 38, fontWeight: FontWeight.bold)),
-                ]),
+        child: Stack(
+          alignment: Alignment.topCenter,
+          children:[
+            Padding(
+              padding: const EdgeInsets.all(30),
+              child: Column(
+                children:[
+                  const SizedBox(height: 50, child: Text("CLINICAL EVALUATION", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+                  SizedBox(
+                    height: 220,
+                    child: Stack(alignment: Alignment.center, children:[
+                      TweenAnimationBuilder<double>(
+                          tween: Tween<double>(begin: 0, end: widget.app.finalScore / 100), duration: const Duration(seconds: 2), curve: Curves.easeOutCubic,
+                          builder: (context, value, child) { return SizedBox(width: 150, height: 150, child: CircularProgressIndicator(value: value, strokeWidth: 14, backgroundColor: Theme.of(context).colorScheme.outline, color: passed ? const Color(0xFF10B981) : const Color(0xFFEF4444))); }),
+                      Text("${widget.app.finalScore}%", style: const TextStyle(fontSize: 38, fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                  Container(height: 70, width: double.infinity, alignment: Alignment.centerLeft, padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12)), child: Text(passed ? "BOARD READINESS: High." : "REMEDIATION: Required.", style: const TextStyle(fontWeight: FontWeight.bold))),
+                  const Spacer(),
+                  SizedBox(
+                    width: double.infinity, 
+                    height: 55, 
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), 
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MedicalReviewScreen(app: widget.app))), 
+                      child: const Text("REVIEW TOPICS", style: TextStyle(fontWeight: FontWeight.bold))
+                    )
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity, 
+                    height: 55, 
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.onSurface, foregroundColor: Theme.of(context).colorScheme.surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), 
+                      onPressed: () { 
+                        widget.app.exitExamMode(); 
+                        Navigator.pop(context); 
+                      }, 
+                      child: const Text("RETURN TO STUDY", style: TextStyle(fontWeight: FontWeight.bold))
+                    )
+                  ),
+                ],
               ),
-              Container(height: 70, width: double.infinity, alignment: Alignment.centerLeft, padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(12)), child: Text(passed ? "BOARD READINESS: High." : "REMEDIATION: Required.", style: const TextStyle(fontWeight: FontWeight.bold))),
-              const Spacer(),
-              SizedBox(width: double.infinity, height: 55, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MedicalReviewScreen(app: app))), child: const Text("REVIEW TOPICS", style: TextStyle(fontWeight: FontWeight.bold)))),
-              const SizedBox(height: 20),
-              SizedBox(width: double.infinity, height: 55, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.onSurface, foregroundColor: Theme.of(context).colorScheme.surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () { app.exitExamMode(); Navigator.pop(context); }, child: const Text("RETURN TO STUDY", style: TextStyle(fontWeight: FontWeight.bold)))),
-            ],
-          ),
+            ),
+            ConfettiWidget(
+              confettiController: _confettiController,
+              blastDirectionality: BlastDirectionality.explosive,
+              shouldLoop: false,
+              colors: const[Colors.green, Colors.blue, Colors.orange, Colors.purple],
+            ),
+          ],
         ),
       ),
     );
@@ -594,13 +753,20 @@ class MedicalReviewScreen extends StatelessWidget {
           SizedBox(height: 50, child: Row(children:[IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), const Text("TOPIC BREAKDOWN", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))])),
           Expanded(
             child: NotificationListener<ScrollUpdateNotification>(
-              onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+              onNotification: (notif) { 
+                app.trackScrollTick(notif.scrollDelta ?? 0); 
+                return false; 
+              },
               child: ListView.separated(
                 physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(20), itemCount: topics.length, separatorBuilder: (_, __) => const SizedBox(height: 15),
                 itemBuilder: (ctx, i) {
-                  String topic = topics[i].key; int total = topics[i].value['total']!; int correct = topics[i].value['correct']!; int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
+                  String topic = topics[i].key; 
+                  int total = topics[i].value['total']!; 
+                  int correct = topics[i].value['correct']!; 
+                  int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
                   Color color = pct >= 80 ? const Color(0xFF10B981) : (pct >= 50 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
                   IconData icon = pct >= 80 ? Icons.check_circle : (pct >= 50 ? Icons.error : Icons.cancel);
+                  
                   return Material(
                     color: Colors.transparent,
                     child: InkWell(
@@ -636,7 +802,10 @@ class MedicalDetailedReviewScreen extends StatelessWidget {
           Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outline))), child: Row(children:[IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), Expanded(child: Text(topic, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis))])),
           Expanded(
             child: NotificationListener<ScrollUpdateNotification>(
-              onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+              onNotification: (notif) { 
+                app.trackScrollTick(notif.scrollDelta ?? 0); 
+                return false; 
+              },
               child: ListView.builder(
                 physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: topicQuestions.length,
                 itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: MedicalReviewQuestionCard(q: topicQuestions[i], app: app)),
@@ -661,7 +830,7 @@ class MedicalReviewQuestionCard extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children:[
           Row(children:[
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(6)), child: Text(q.topic, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),
@@ -687,18 +856,41 @@ class MedicalReviewRootWidget extends StatelessWidget {
     String userAns = app.userAnswers[r.id] ?? "";
     String actualAns = r.answer;
     bool showExp = app.explanationRevealed[r.id] ?? false;
-    bool isCorrect = userAns == actualAns; bool isUnanswered = userAns == "";
+    bool isCorrect = userAns == actualAns; 
+    bool isUnanswered = userAns == "";
 
-    Color dotBg = Colors.transparent; Color dotBorder = Theme.of(context).colorScheme.outline;
-    Color dotTextColor = Theme.of(context).colorScheme.onSurface; String dotText = actualAns;
-    Color badgeColor = Colors.transparent; Color badgeTextColor = Colors.white; String badgeText = ""; IconData? badgeIcon;
+    Color dotBg = Colors.transparent; 
+    Color dotBorder = Theme.of(context).colorScheme.outline;
+    Color dotTextColor = Theme.of(context).colorScheme.onSurface; 
+    String dotText = actualAns;
+    
+    Color badgeColor = Colors.transparent; 
+    Color badgeTextColor = Colors.white; 
+    String badgeText = ""; 
+    IconData? badgeIcon;
 
     if (isUnanswered) {
-      dotBorder = Colors.grey; dotTextColor = Colors.grey; badgeColor = Colors.grey.shade600; badgeText = "UNANSWERED"; badgeIcon = Icons.remove;
+      dotBorder = Colors.grey; 
+      dotTextColor = Colors.grey; 
+      badgeColor = Colors.grey.shade600; 
+      badgeText = "UNANSWERED"; 
+      badgeIcon = Icons.remove;
     } else if (isCorrect) {
-      dotBg = const Color(0xFF10B981); dotBorder = dotBg; dotTextColor = Colors.white; badgeColor = const Color(0xFF10B981).withValues(alpha: 0.2); badgeTextColor = const Color(0xFF10B981); badgeText = "CORRECT"; badgeIcon = Icons.check;
+      dotBg = const Color(0xFF10B981); 
+      dotBorder = dotBg; 
+      dotTextColor = Colors.white; 
+      badgeColor = const Color(0xFF10B981).withValues(alpha: 0.2); 
+      badgeTextColor = const Color(0xFF10B981); 
+      badgeText = "CORRECT"; 
+      badgeIcon = Icons.check;
     } else {
-      dotBg = const Color(0xFFEF4444); dotBorder = dotBg; dotTextColor = Colors.white; badgeColor = const Color(0xFFEF4444).withValues(alpha: 0.2); badgeTextColor = const Color(0xFFEF4444); badgeText = "YOU CHOSE: $userAns"; badgeIcon = Icons.close;
+      dotBg = const Color(0xFFEF4444); 
+      dotBorder = dotBg; 
+      dotTextColor = Colors.white; 
+      badgeColor = const Color(0xFFEF4444).withValues(alpha: 0.2); 
+      badgeTextColor = const Color(0xFFEF4444); 
+      badgeText = "YOU CHOSE: $userAns"; 
+      badgeIcon = Icons.close;
     }
 
     return Column(
