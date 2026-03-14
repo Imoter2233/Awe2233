@@ -30,6 +30,7 @@ const String volumePrefKey = "synapse_volume_pref";
 const String firstRunKey = "synapse_first_run";
 const String cacheFileName = "synapse_offline_db.json"; 
 const String lastSyncKey = "synapse_last_sync_time";
+const String globalOffsetKey = "synapse_global_offset";
 
 const String isLoggedInKey = "synapse_is_logged_in";
 const String userTokenKey = "synapse_user_token";
@@ -137,7 +138,13 @@ class AppState extends ChangeNotifier {
   int themeColorIndex = 0;
   bool isFirstRun = true;
   bool isLoading = true;
-  bool isLockedOut = false; 
+
+  // SECURITY VARIABLES
+  bool isSyncRequired = false;
+  Timer? _activeSessionTimer;
+  DateTime _lastCheckedLocalTime = DateTime.now();
+  int _lastSyncTimeMs = 0;
+  int _globalTimeOffsetMs = 0;
 
   bool soundEnabled = true;
   double soundVolume = 0.5;
@@ -154,7 +161,7 @@ class AppState extends ChangeNotifier {
   bool hasSeenWelcome = false;
   String errorMessage = "";
 
-  List<QuestionModel> fullDB =[];
+  List<QuestionModel> fullDB = [];
   List<QuestionModel> filteredDB =[];
   String searchText = "";
   
@@ -214,14 +221,32 @@ class AppState extends ChangeNotifier {
     userLevel = prefs.getString(levelKey) ?? "100L";
     hasSeenWelcome = prefs.getBool(welcomeSeenKey) ?? false;
 
+    _lastSyncTimeMs = prefs.getInt(lastSyncKey) ?? 0;
+    _globalTimeOffsetMs = prefs.getInt(globalOffsetKey) ?? 0;
+
     if (isLoggedIn && userToken.isNotEmpty) {
-      bool isSecure = await _performSecurityCheck();
-      if (isSecure) {
-        await _loadLocalFileCache();
-        _fetchFromServer(); 
-      } else {
+      DateTime rawNow = DateTime.now();
+      int secureNowMs = rawNow.millisecondsSinceEpoch + _globalTimeOffsetMs;
+      
+      // =====================================================================
+      // 🚨 THE "ACTIVE SESSION" TIME-BOMB (10-MINUTE TEST MODE) 🚨
+      // Set the limit to 10 minutes for testing. 
+      // CHANGE TO 7 DAYS LATER (e.g., 7 * 24 * 60 * 60 * 1000)
+      // =====================================================================
+      const int sessionLimitMs = 10 * 60 * 1000;
+
+      if (secureNowMs - _lastSyncTimeMs > sessionLimitMs) {
+        // Time exceeded while app was closed. Trigger Overlay Lock.
+        isSyncRequired = true;
         isLoading = false;
         notifyListeners();
+        _startActiveSessionTimer();
+      } else {
+        // ZERO FIREBASE WASTING: Boot instantly from local JSON cache
+        await _loadLocalFileCache();
+        isLoading = false;
+        notifyListeners();
+        _startActiveSessionTimer();
       }
     } else {
       isLoading = false;
@@ -229,7 +254,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --- SECURITY: GLOBAL TIME ---
+  // --- SECURITY: GLOBAL TIME OFFSET ---
   Future<DateTime?> _getGlobalTime() async {
     try {
       final response = await http
@@ -239,63 +264,133 @@ class AppState extends ChangeNotifier {
         final data = jsonDecode(response.body);
         return DateTime.parse(data['utc_datetime']);
       }
-    } catch (_) {}
+    } catch (_) {
+      // Ignore API failure and fallback
+    }
     return null;
   }
 
-  Future<bool> _performSecurityCheck() async {
+  // --- SECURITY: RUTHLESS FIREBASE TOKEN VALIDATION ---
+  Future<bool> _verifyTokenLive() async {
     try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      int lastSync = prefs.getInt(lastSyncKey) ?? 0;
-      DateTime? globalTime = await _getGlobalTime();
+      // FORCE LIVE SERVER CHECK (No Ghost Caching Bypass)
+      DocumentSnapshot tokenDoc = await FirebaseFirestore.instance
+          .collection('tokens')
+          .doc(userToken)
+          .get(const GetOptions(source: Source.server));
 
-      if (globalTime == null) {
-        DateTime lastSyncDate = DateTime.fromMillisecondsSinceEpoch(lastSync);
-        DateTime localTime = DateTime.now();
-
-        // Time Travel Check
-        if (localTime.isBefore(lastSyncDate.subtract(const Duration(minutes: 5)))) {
-          await _executeRemoteWipe("Security Alert: System time tampering detected.");
-          return false;
-        }
-
-        // ==============================================================
-        // 🚨 30 MINUTES OFFLINE LOCKOUT 🚨
-        // ==============================================================
-        if (localTime.difference(lastSyncDate).inMinutes > 30) {
-          errorMessage = "Security Lock: 30-Min Limit Reached. Connect to internet.";
-          isLockedOut = true;
-          return false;
-        }
-        return true; 
-      }
-
-      DocumentSnapshot tokenDoc = await FirebaseFirestore.instance.collection('tokens').doc(userToken).get();
-      if (tokenDoc.exists) {
-        Map<String, dynamic> data = tokenDoc.data() as Map<String, dynamic>;
-        
-        bool isRevoked = data['isRevoked'] ?? false;
-        if (isRevoked) {
-          await _executeRemoteWipe("Access Revoked: Your token has been disabled.");
-          return false;
-        }
-
-        await prefs.setInt(lastSyncKey, globalTime.millisecondsSinceEpoch);
-        isLockedOut = false;
-        return true;
-      } else {
+      if (!tokenDoc.exists) {
         await _executeRemoteWipe("Security Alert: Token invalid or deleted.");
         return false;
       }
+
+      Map<String, dynamic> data = tokenDoc.data() as Map<String, dynamic>;
+      
+      bool isRevoked = data['isRevoked'] ?? false;
+      if (isRevoked) {
+        await _executeRemoteWipe("Access Revoked: Your token has been disabled.");
+        return false;
+      }
+
+      // Check Token Expiry
+      if (data.containsKey('expiryDate') && data['expiryDate'] != null) {
+        Timestamp expiry = data['expiryDate'];
+        if (DateTime.now().isAfter(expiry.toDate())) {
+          await _executeRemoteWipe("Token Expired: Please purchase a new token.");
+          return false;
+        }
+      }
+
+      return true;
     } catch (e) {
-      debugPrint("Security Check Error: $e");
-      return true; 
+      errorMessage = "Network error. Please connect to the internet to verify your session.";
+      notifyListeners();
+      return false; // False, but we do not wipe. They remain trapped in the Sync overlay until internet is restored.
     }
+  }
+
+  // --- THE TIME-BOMB BACKGROUND TRACKER ---
+  void _startActiveSessionTimer() {
+    _activeSessionTimer?.cancel();
+    _lastCheckedLocalTime = DateTime.now();
+
+    _activeSessionTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (!isLoggedIn || userToken.isEmpty) {
+        return;
+      }
+
+      DateTime rawNow = DateTime.now();
+
+      // TIME TRAVEL TRAP: Trigger total wipe if clock moved backwards
+      if (rawNow.isBefore(_lastCheckedLocalTime.subtract(const Duration(seconds: 5)))) {
+        _executeRemoteWipe("Security Alert: System time tampering detected.");
+        timer.cancel();
+        return;
+      }
+      _lastCheckedLocalTime = rawNow;
+
+      // Calculate Monotonic Secure Time
+      int secureNowMs = rawNow.millisecondsSinceEpoch + _globalTimeOffsetMs;
+
+      // =====================================================================
+      // 🚨 ACTIVE WIPE TRIGGER (10-MINUTE TEST MODE) 🚨
+      // CHANGE TO 7 DAYS LATER (e.g., 7 * 24 * 60 * 60 * 1000)
+      // =====================================================================
+      const int sessionLimitMs = 10 * 60 * 1000; 
+
+      if (secureNowMs - _lastSyncTimeMs > sessionLimitMs) {
+        if (!isSyncRequired) {
+          isSyncRequired = true;
+          // ACTIVE WIPE: Clear database instantly from RAM
+          fullDB.clear();
+          filteredDB.clear();
+          notifyListeners();
+        }
+      }
+    });
+  }
+
+  // --- THE "REFRESH / SYNC NOW" OVERLAY ACTION ---
+  Future<void> forceSyncNow() async {
+    isLoading = true;
+    errorMessage = "";
+    notifyListeners();
+
+    bool isSecure = await _verifyTokenLive();
+    if (!isSecure) {
+      isLoading = false;
+      notifyListeners();
+      return; 
+    }
+
+    // Token is valid. Pull latest CSV data.
+    await _fetchFromServer();
+
+    // Re-calibrate Secure Monotonic Time
+    DateTime? globalTime = await _getGlobalTime();
+    DateTime rawNow = DateTime.now();
+    int syncTimeMs = globalTime?.millisecondsSinceEpoch ?? rawNow.millisecondsSinceEpoch;
+    
+    _globalTimeOffsetMs = syncTimeMs - rawNow.millisecondsSinceEpoch;
+    _lastSyncTimeMs = syncTimeMs;
+
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(lastSyncKey, _lastSyncTimeMs);
+    await prefs.setInt(globalOffsetKey, _globalTimeOffsetMs);
+
+    isSyncRequired = false;
+    isLoading = false;
+    notifyListeners();
+  }
+
+  // Manual update requested from side drawer
+  Future<void> checkForUpdates() async {
+    await forceSyncNow();
   }
 
   Future<void> _executeRemoteWipe(String reason) async {
     errorMessage = reason;
-    isLockedOut = true;
+    isSyncRequired = false;
     await _wipeLocalData(); 
   }
 
@@ -324,6 +419,7 @@ class AppState extends ChangeNotifier {
     
     isLoggedIn = false;
     userToken = "";
+    _activeSessionTimer?.cancel();
     notifyListeners();
   }
 
@@ -349,9 +445,16 @@ class AppState extends ChangeNotifier {
   Future<void> registerToken(String token) async {
     try {
       errorMessage = "";
-      DateTime ping = await _getGlobalTime() ?? DateTime.now();
+      DateTime rawNow = DateTime.now();
+      DateTime ping = await _getGlobalTime() ?? rawNow;
+      
+      _globalTimeOffsetMs = ping.millisecondsSinceEpoch - rawNow.millisecondsSinceEpoch;
+      _lastSyncTimeMs = ping.millisecondsSinceEpoch;
 
-      DocumentSnapshot tokenDoc = await FirebaseFirestore.instance.collection('tokens').doc(token).get();
+      DocumentSnapshot tokenDoc = await FirebaseFirestore.instance
+          .collection('tokens')
+          .doc(token)
+          .get(const GetOptions(source: Source.server));
 
       if (!tokenDoc.exists) {
         errorMessage = "Invalid Token.";
@@ -365,6 +468,15 @@ class AppState extends ChangeNotifier {
         errorMessage = "Security Alert: Revoked Token.";
         notifyListeners();
         return;
+      }
+
+      if (data.containsKey('expiryDate') && data['expiryDate'] != null) {
+        Timestamp expiry = data['expiryDate'];
+        if (DateTime.now().isAfter(expiry.toDate())) {
+          errorMessage = "Token Expired: Please purchase a new token.";
+          notifyListeners();
+          return;
+        }
       }
 
       bool isUsed = data['isUsed'] ?? false;
@@ -405,14 +517,16 @@ class AppState extends ChangeNotifier {
             await prefs.setString(levelKey, userLevel);
             await prefs.setBool(isLoggedInKey, true);
             await prefs.setString(userTokenKey, token);
-            await prefs.setInt(lastSyncKey, ping.millisecondsSinceEpoch);
+            await prefs.setInt(lastSyncKey, _lastSyncTimeMs);
+            await prefs.setInt(globalOffsetKey, _globalTimeOffsetMs);
 
             userToken = token;
-            isLockedOut = false;
+            isSyncRequired = false;
             isLoading = true;
             notifyListeners();
             await _loadLocalFileCache();
             await _fetchFromServer();
+            _startActiveSessionTimer();
             return;
           }
         }
@@ -423,9 +537,11 @@ class AppState extends ChangeNotifier {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       userToken = token;
       await prefs.setString(userTokenKey, token);
-      await prefs.setInt(lastSyncKey, ping.millisecondsSinceEpoch);
-      isLockedOut = false;
+      await prefs.setInt(lastSyncKey, _lastSyncTimeMs);
+      await prefs.setInt(globalOffsetKey, _globalTimeOffsetMs);
+      isSyncRequired = false;
       notifyListeners();
+      _startActiveSessionTimer();
     } catch (e) {
       errorMessage = "Connection error. Weak Network.";
       notifyListeners();
@@ -495,6 +611,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       await _loadLocalFileCache();
       await _fetchFromServer();
+      _startActiveSessionTimer();
     } catch (e) {
       errorMessage = "Signup Error.";
       notifyListeners();
@@ -662,7 +779,7 @@ class AppState extends ChangeNotifier {
   }
 
   void toggleYearForTopic(String topic, String year) {
-    activeTopicYears.putIfAbsent(topic, () => []);
+    activeTopicYears.putIfAbsent(topic, () =>[]);
     if (activeTopicYears[topic]!.contains(year)) {
       activeTopicYears[topic]!.remove(year);
     } else {

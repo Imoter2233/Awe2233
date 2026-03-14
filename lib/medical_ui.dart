@@ -103,6 +103,75 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
     super.dispose();
   }
 
+  // --- SECURITY: THE LOCKOUT OVERLAY ---
+  Widget _buildSyncOverlay(AppState app) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(30),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children:[
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.lock_clock_rounded, size: 80, color: Theme.of(context).colorScheme.primary),
+          ),
+          const SizedBox(height: 30),
+          Text(
+            "Weekly Sync Required", 
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)
+          ),
+          const SizedBox(height: 15),
+          Text(
+            "Your offline session has expired. Please connect to the internet and tap Refresh to securely sync your clinical data.",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, height: 1.5, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7))
+          ),
+          const SizedBox(height: 40),
+          if (app.isLoading)
+            const CircularProgressIndicator()
+          else
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: app.isDarkMode ? Colors.black : Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 5,
+                ),
+                icon: const Icon(Icons.refresh_rounded, size: 24),
+                label: const Text("Sync Now", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, letterSpacing: 1.2)),
+                onPressed: () {
+                  app.forceSyncNow();
+                }
+              )
+            ),
+          if (app.errorMessage.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5))
+              ),
+              child: Text(
+                app.errorMessage, 
+                textAlign: TextAlign.center, 
+                style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13)
+              )
+            )
+          ]
+        ]
+      )
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
@@ -184,12 +253,12 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                 ],
               ),
             ),
-            if (_showBanner && !app.isExamMode)
+            if (_showBanner && !app.isExamMode && !app.isSyncRequired)
               Container(
                 width: double.infinity, margin: const EdgeInsets.all(15), padding: const EdgeInsets.all(15),
                 decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3))),
                 child: Row(
-                  children: [
+                  children:[
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -213,7 +282,7 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                   ],
                 ),
               ),
-            if (app.activeTopics.isNotEmpty)
+            if (app.activeTopics.isNotEmpty && !app.isSyncRequired)
               Container(
                 height: 50, alignment: Alignment.centerLeft,
                 child: ListView(
@@ -252,20 +321,22 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                 ),
               ),
             Expanded(
-              child: app.filteredDB.isEmpty
-                  ? Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text(app.errorMessage.isNotEmpty ? app.errorMessage : "No questions match your criteria.", textAlign: TextAlign.center, style: TextStyle(color: app.errorMessage.isNotEmpty ? Colors.redAccent : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 16))))
-                  : NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { 
-                        app.trackScrollTick(notif.scrollDelta ?? 0); 
-                        return false; 
-                      },
-                      child: ListView.builder(
-                        physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
-                        itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: MedicalQuestionCard(q: pageItems[i], app: app)),
-                      ),
-                    ),
+              child: app.isSyncRequired
+                  ? _buildSyncOverlay(app)
+                  : app.filteredDB.isEmpty
+                      ? Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text(app.errorMessage.isNotEmpty ? app.errorMessage : "No questions match your criteria.", textAlign: TextAlign.center, style: TextStyle(color: app.errorMessage.isNotEmpty ? Colors.redAccent : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 16))))
+                      : NotificationListener<ScrollUpdateNotification>(
+                          onNotification: (notif) { 
+                            app.trackScrollTick(notif.scrollDelta ?? 0); 
+                            return false; 
+                          },
+                          child: ListView.builder(
+                            physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
+                            itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: MedicalQuestionCard(q: pageItems[i], app: app)),
+                          ),
+                        ),
             ),
-            if (app.totalPages > 1)
+            if (app.totalPages > 1 && !app.isSyncRequired)
               Container(
                 height: 60, padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
@@ -357,6 +428,10 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                 _buildDrawerItem(context, icon: Icons.timer_rounded, title: "Exam Mode", onTap: () { 
                   Navigator.pop(context); 
                   _showExamTimeDialog(context, app); 
+                }),
+                _buildDrawerItem(context, icon: Icons.sync_rounded, title: "Check for Updates", subtitle: "Secure manual sync", onTap: () { 
+                  Navigator.pop(context); 
+                  app.checkForUpdates(); 
                 }),
                 _buildDrawerItem(context, icon: Icons.logout_rounded, title: "Log Out", subtitle: "Testing only", onTap: () { 
                   Navigator.pop(context); 

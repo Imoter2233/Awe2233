@@ -69,7 +69,10 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                   Padding(padding: const EdgeInsets.all(16.0), child: Text("Filter Years for $courseCode", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
                   Flexible(
                     child: NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                      onNotification: (notif) { 
+                        app.trackScrollTick(notif.scrollDelta ?? 0); 
+                        return false; 
+                      },
                       child: ListView(
                         shrinkWrap: true, physics: const BouncingScrollPhysics(),
                         children:[
@@ -79,7 +82,9 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                             value: isAllYears,
                             onChanged: (bool? value) { 
                               if (value == true) { 
-                                for (String t in courseTopics) { app.clearYearsForTopic(t); }
+                                for (String t in courseTopics) { 
+                                  app.clearYearsForTopic(t); 
+                                }
                                 setModalState(() {}); 
                               } 
                             },
@@ -92,7 +97,9 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                               title: Text(year, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
                               value: isSelected,
                               onChanged: (bool? value) { 
-                                for (String t in courseTopics) { app.toggleYearForTopic(t, year); }
+                                for (String t in courseTopics) { 
+                                  app.toggleYearForTopic(t, year); 
+                                }
                                 setModalState(() {}); 
                               },
                             );
@@ -137,6 +144,75 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
     super.dispose();
   }
 
+  // --- SECURITY: THE LOCKOUT OVERLAY ---
+  Widget _buildSyncOverlay(AppState app) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(30),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children:[
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.lock_clock_rounded, size: 80, color: Theme.of(context).colorScheme.primary),
+          ),
+          const SizedBox(height: 30),
+          Text(
+            "Weekly Sync Required", 
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)
+          ),
+          const SizedBox(height: 15),
+          Text(
+            "Your offline session has expired. Please connect to the internet and tap Refresh to securely sync your data.",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, height: 1.5, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7))
+          ),
+          const SizedBox(height: 40),
+          if (app.isLoading)
+            const CircularProgressIndicator()
+          else
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: app.isDarkMode ? Colors.black : Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 5,
+                ),
+                icon: const Icon(Icons.refresh_rounded, size: 24),
+                label: const Text("Sync Now", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, letterSpacing: 1.2)),
+                onPressed: () {
+                  app.forceSyncNow();
+                }
+              )
+            ),
+          if (app.errorMessage.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5))
+              ),
+              child: Text(
+                app.errorMessage, 
+                textAlign: TextAlign.center, 
+                style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13)
+              )
+            )
+          ]
+        ]
+      )
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
@@ -174,7 +250,11 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                            IconButton(
                              icon: Icon(_masterExpandAll ? Icons.unfold_less : Icons.unfold_more), 
                              tooltip: _masterExpandAll ? "Collapse All" : "Expand All",
-                             onPressed: () => setState(() => _masterExpandAll = !_masterExpandAll)
+                             onPressed: () {
+                               setState(() {
+                                 _masterExpandAll = !_masterExpandAll;
+                               });
+                             }
                            ),
                         if (app.isExamMode)
                           Container(
@@ -218,14 +298,17 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(22.5), borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 1.5)),
                           contentPadding: EdgeInsets.zero,
                         ),
-                        onChanged: (val) { app.searchText = val; app.applyFilters(); },
+                        onChanged: (val) { 
+                          app.searchText = val; 
+                          app.applyFilters(); 
+                        },
                       ),
                     ),
                   ),
                 ],
               ),
             ),
-            if (_showBanner && !app.isExamMode)
+            if (_showBanner && !app.isExamMode && !app.isSyncRequired)
               Container(
                 width: double.infinity, margin: const EdgeInsets.all(15), padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3))),
@@ -241,11 +324,16 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                         ],
                       ),
                     ),
-                    IconButton(icon: const Icon(Icons.close, size: 20), color: Theme.of(context).colorScheme.primary, onPressed: () { setState(() => _showBanner = false); app.markWelcomeSeen(); })
+                    IconButton(icon: const Icon(Icons.close, size: 20), color: Theme.of(context).colorScheme.primary, onPressed: () { 
+                      setState(() {
+                        _showBanner = false;
+                      }); 
+                      app.markWelcomeSeen(); 
+                    })
                   ],
                 ),
               ),
-            if (activeCourseCodes.isNotEmpty)
+            if (activeCourseCodes.isNotEmpty && !app.isSyncRequired)
               Container(
                 height: 50, alignment: Alignment.centerLeft,
                 child: ListView(
@@ -269,7 +357,8 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children:[
                                 Text(courseCode, style: TextStyle(color: app.isDarkMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                                if (isYearFiltered) Padding(padding: const EdgeInsets.only(left: 4), child: Text("($yearDisplay)", style: TextStyle(color: app.isDarkMode ? Colors.black54 : Colors.white70, fontWeight: FontWeight.w900, fontSize: 11))),
+                                if (isYearFiltered) 
+                                  Padding(padding: const EdgeInsets.only(left: 4), child: Text("($yearDisplay)", style: TextStyle(color: app.isDarkMode ? Colors.black54 : Colors.white70, fontWeight: FontWeight.w900, fontSize: 11))),
                                 Icon(Icons.arrow_drop_down, size: 18, color: app.isDarkMode ? Colors.black54 : Colors.white70),
                                 const SizedBox(width: 4),
                                 GestureDetector(
@@ -290,17 +379,22 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                 ),
               ),
             Expanded(
-              child: app.filteredDB.isEmpty
-                  ? Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text(app.errorMessage.isNotEmpty ? app.errorMessage : "No questions match your criteria.", textAlign: TextAlign.center, style: TextStyle(color: app.errorMessage.isNotEmpty ? Colors.redAccent : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 16))))
-                  : NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
-                      child: ListView.builder(
-                        physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
-                        itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 15), child: ScienceQuestionCard(q: pageItems[i], app: app, isGloballyExpanded: _masterExpandAll)),
-                      ),
-                    ),
+              child: app.isSyncRequired
+                  ? _buildSyncOverlay(app)
+                  : app.filteredDB.isEmpty
+                      ? Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text(app.errorMessage.isNotEmpty ? app.errorMessage : "No questions match your criteria.", textAlign: TextAlign.center, style: TextStyle(color: app.errorMessage.isNotEmpty ? Colors.redAccent : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 16))))
+                      : NotificationListener<ScrollUpdateNotification>(
+                          onNotification: (notif) { 
+                            app.trackScrollTick(notif.scrollDelta ?? 0); 
+                            return false; 
+                          },
+                          child: ListView.builder(
+                            physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
+                            itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 15), child: ScienceQuestionCard(q: pageItems[i], app: app, isGloballyExpanded: _masterExpandAll)),
+                          ),
+                        ),
             ),
-            if (app.totalPages > 1)
+            if (app.totalPages > 1 && !app.isSyncRequired)
               Container(
                 height: 60, padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
@@ -308,11 +402,15 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                     IconButton(icon: const Icon(Icons.chevron_left), onPressed: app.currentPage > 1 ? () => _changePage(app.currentPage - 1) : null),
                     Expanded(
                         child: NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                      onNotification: (notif) { 
+                        app.trackScrollTick(notif.scrollDelta ?? 0); 
+                        return false; 
+                      },
                       child: ListView.builder(
                           controller: _pageScrollController, scrollDirection: Axis.horizontal, itemCount: app.totalPages,
                           itemBuilder: (context, index) {
-                            int page = index + 1; bool isActive = page == app.currentPage;
+                            int page = index + 1; 
+                            bool isActive = page == app.currentPage;
                             return GestureDetector(
                               onTap: () => _changePage(page),
                               child: Container(
@@ -334,7 +432,8 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
   }
 
   String _formatTime(int seconds) {
-    int m = seconds ~/ 60; int s = seconds % 60;
+    int m = seconds ~/ 60; 
+    int s = seconds % 60;
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
@@ -363,7 +462,10 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                       Text("ID: ${app.uniqueId}", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(width: 5),
                       GestureDetector(
-                        onTap: () { Clipboard.setData(ClipboardData(text: app.uniqueId)); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID Copied!"))); },
+                        onTap: () { 
+                          Clipboard.setData(ClipboardData(text: app.uniqueId)); 
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID Copied!"))); 
+                        },
                         child: Icon(Icons.copy, size: 14, color: Theme.of(context).colorScheme.primary),
                       )
                     ],
@@ -377,9 +479,19 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               children:[
-                _buildDrawerItem(context, icon: Icons.menu_book_rounded, title: "Study Mode", onTap: () { app.exitExamMode(); Navigator.pop(context); }),
+                _buildDrawerItem(context, icon: Icons.menu_book_rounded, title: "Study Mode", onTap: () { 
+                  app.exitExamMode(); 
+                  Navigator.pop(context); 
+                }),
                 _buildDrawerItem(context, icon: Icons.timer_rounded, title: "Exam Mode", onTap: _handleExamModeClick),
-                _buildDrawerItem(context, icon: Icons.logout_rounded, title: "Log Out", subtitle: "Testing only", onTap: () { Navigator.pop(context); app.logOut(); }),
+                _buildDrawerItem(context, icon: Icons.sync_rounded, title: "Check for Updates", subtitle: "Secure manual sync", onTap: () { 
+                  Navigator.pop(context); 
+                  app.checkForUpdates(); 
+                }),
+                _buildDrawerItem(context, icon: Icons.logout_rounded, title: "Log Out", subtitle: "Testing only", onTap: () { 
+                  Navigator.pop(context); 
+                  app.logOut(); 
+                }),
                 const Divider(height: 20),
                 Padding(padding: const EdgeInsets.only(left: 16, top: 10, bottom: 10), child: Text("APPEARANCE", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)))),
                 Padding(
@@ -452,7 +564,10 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                       ),
                       Expanded(
                           child: NotificationListener<ScrollUpdateNotification>(
-                        onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                        onNotification: (notif) { 
+                          app.trackScrollTick(notif.scrollDelta ?? 0); 
+                          return false; 
+                        },
                         child: ListView.builder(
                             padding: const EdgeInsets.symmetric(vertical: 5), 
                             itemCount: app.courseTopics.keys.length,
@@ -474,9 +589,15 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                                     onChanged: (val) {
                                       setState(() {
                                         if (val == true) {
-                                          for (var t in topics) { if (!tempFilters.contains(t)) tempFilters.add(t); }
+                                          for (var t in topics) { 
+                                            if (!tempFilters.contains(t)) {
+                                              tempFilters.add(t); 
+                                            }
+                                          }
                                         } else {
-                                          for (var t in topics) { tempFilters.remove(t); }
+                                          for (var t in topics) { 
+                                            tempFilters.remove(t); 
+                                          }
                                         }
                                       });
                                     }
@@ -508,9 +629,31 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                         height: 60, padding: const EdgeInsets.symmetric(horizontal: 10),
                         child: Row(
                           children:[
-                            Expanded(child: TextButton(style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3), foregroundColor: Theme.of(context).colorScheme.onSurface), onPressed: () { setState(() => tempFilters.clear()); app.activeTopicYears.clear(); app.applyFiltersWith(tempFilters); Navigator.pop(ctx); }, child: const Text("RESET", style: TextStyle(fontWeight: FontWeight.bold)))),
+                            Expanded(
+                              child: TextButton(
+                                style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3), foregroundColor: Theme.of(context).colorScheme.onSurface), 
+                                onPressed: () { 
+                                  setState(() {
+                                    tempFilters.clear();
+                                  }); 
+                                  app.activeTopicYears.clear(); 
+                                  app.applyFiltersWith(tempFilters); 
+                                  Navigator.pop(ctx); 
+                                }, 
+                                child: const Text("RESET", style: TextStyle(fontWeight: FontWeight.bold))
+                              )
+                            ),
                             const SizedBox(width: 10),
-                            Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: app.isDarkMode ? Colors.black : Colors.white), onPressed: () { app.applyFiltersWith(tempFilters); Navigator.pop(ctx); }, child: const Text("APPLY", style: TextStyle(fontWeight: FontWeight.bold))))
+                            Expanded(
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: app.isDarkMode ? Colors.black : Colors.white), 
+                                onPressed: () { 
+                                  app.applyFiltersWith(tempFilters); 
+                                  Navigator.pop(ctx); 
+                                }, 
+                                child: const Text("APPLY", style: TextStyle(fontWeight: FontWeight.bold))
+                              )
+                            )
                           ],
                         ),
                       )
@@ -522,7 +665,8 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
   }
 
   void _showExamTimeDialog(BuildContext context, AppState app) {
-    int selectedHour = 0; int selectedMin = 10;
+    int selectedHour = 0; 
+    int selectedMin = 10;
     showDialog(
         context: context,
         builder: (ctx) => StatefulBuilder(builder: (context, setState) {
@@ -538,7 +682,12 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                               Expanded(
                                 child: ListWheelScrollView.useDelegate(
                                     itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
-                                    onSelectedItemChanged: (v) { app.playScrollSound(); setState(() => selectedHour = v); },
+                                    onSelectedItemChanged: (v) { 
+                                      app.playScrollSound(); 
+                                      setState(() {
+                                        selectedHour = v;
+                                      }); 
+                                    },
                                     childDelegate: ListWheelChildBuilderDelegate(childCount: 13, builder: (ctx, i) => Center(child: Text("$i".padLeft(2, '0'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: selectedHour == i ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)))))),
                               ),
                             ],
@@ -551,14 +700,31 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                               Expanded(
                                 child: ListWheelScrollView.useDelegate(
                                     itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005, controller: FixedExtentScrollController(initialItem: 10),
-                                    onSelectedItemChanged: (v) { app.playScrollSound(); setState(() => selectedMin = v); },
+                                    onSelectedItemChanged: (v) { 
+                                      app.playScrollSound(); 
+                                      setState(() {
+                                        selectedMin = v;
+                                      }); 
+                                    },
                                     childDelegate: ListWheelChildBuilderDelegate(childCount: 60, builder: (ctx, val) { return Center(child: Text("$val".padLeft(2, '0'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: selectedMin == val ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)))); })),
                               ),
                             ],
                           ),
                         )
                       ])),
-                  actions:[TextButton(onPressed: () { int totalMins = selectedHour * 60 + selectedMin; if (totalMins == 0) totalMins = 1; app.startExam(totalMins); Navigator.pop(ctx); }, child: Text("START", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 16)))]);
+                  actions:[
+                    TextButton(
+                      onPressed: () { 
+                        int totalMins = selectedHour * 60 + selectedMin; 
+                        if (totalMins == 0) {
+                          totalMins = 1;
+                        } 
+                        app.startExam(totalMins); 
+                        Navigator.pop(ctx); 
+                      }, 
+                      child: Text("START", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 16))
+                    )
+                  ]);
             }));
   }
 }
@@ -714,7 +880,9 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
 
     return GestureDetector(
         onTap: () {
-          if (app.isExamMode) app.handleScienceOptionClick(q.id, letter);
+          if (app.isExamMode) {
+            app.handleScienceOptionClick(q.id, letter);
+          }
         },
         child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
@@ -755,7 +923,11 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
           
           if (widget.q.imageUrl.isNotEmpty) ...[
             GestureDetector(
-                onTap: () => setState(() => _imgOpen = !_imgOpen),
+                onTap: () {
+                  setState(() {
+                    _imgOpen = !_imgOpen;
+                  });
+                },
                 child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
@@ -823,7 +995,11 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
                     iconSize: 18,
                     icon: Icon(_isLocallyExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
                     color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                    onPressed: () => setState(() => _isLocallyExpanded = !_isLocallyExpanded),
+                    onPressed: () {
+                      setState(() {
+                        _isLocallyExpanded = !_isLocallyExpanded;
+                      });
+                    },
                   ),
                 ),
               const Spacer(),
@@ -888,7 +1064,9 @@ class _ScienceResultScreenState extends State<ScienceResultScreen> {
   void initState() {
     super.initState();
     _confettiController = ConfettiController(duration: const Duration(seconds: 3));
-    if (widget.app.finalScore == 100) _confettiController.play();
+    if (widget.app.finalScore == 100) {
+      _confettiController.play();
+    }
   }
 
   @override
@@ -955,11 +1133,17 @@ class ScienceReviewScreen extends StatelessWidget {
           SizedBox(height: 50, child: Row(children:[IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), const Text("TOPIC BREAKDOWN", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))])),
           Expanded(
             child: NotificationListener<ScrollUpdateNotification>(
-              onNotification: (notif) { app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+              onNotification: (notif) { 
+                app.trackScrollTick(notif.scrollDelta ?? 0); 
+                return false; 
+              },
               child: ListView.separated(
                 physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(20), itemCount: topics.length, separatorBuilder: (_, __) => const SizedBox(height: 15),
                 itemBuilder: (ctx, i) {
-                  String topic = topics[i].key; int total = topics[i].value['total']!; int correct = topics[i].value['correct']!; int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
+                  String topic = topics[i].key; 
+                  int total = topics[i].value['total']!; 
+                  int correct = topics[i].value['correct']!; 
+                  int pct = total == 0 ? 0 : ((correct / total) * 100).toInt();
                   Color color = pct >= 80 ? const Color(0xFF10B981) : (pct >= 50 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
                   IconData icon = pct >= 80 ? Icons.check_circle : (pct >= 50 ? Icons.error : Icons.cancel);
                   return Material(
@@ -1011,7 +1195,9 @@ class _ScienceDetailedReviewScreenState extends State<ScienceDetailedReviewScree
   }
 
   void _changePage(int newPage) {
-    setState(() { _localCurrentPage = newPage; });
+    setState(() { 
+      _localCurrentPage = newPage; 
+    });
     if (_reviewPageScrollController.hasClients) {
       double offset = (newPage - 1) * 44.0;
       _reviewPageScrollController.animateTo(
@@ -1038,7 +1224,10 @@ class _ScienceDetailedReviewScreenState extends State<ScienceDetailedReviewScree
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outline))), child: Row(children:[IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)), Expanded(child: Text(widget.topic, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis))])),
             Expanded(
               child: NotificationListener<ScrollUpdateNotification>(
-                onNotification: (notif) { widget.app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                onNotification: (notif) { 
+                  widget.app.trackScrollTick(notif.scrollDelta ?? 0); 
+                  return false; 
+                },
                 child: ListView.builder(
                   physics: const BouncingScrollPhysics(), padding: const EdgeInsets.all(15), itemCount: pageItems.length,
                   itemBuilder: (ctx, i) => Padding(padding: const EdgeInsets.only(bottom: 20), child: ScienceReviewQuestionCard(q: pageItems[i], app: widget.app)),
@@ -1053,11 +1242,15 @@ class _ScienceDetailedReviewScreenState extends State<ScienceDetailedReviewScree
                     IconButton(icon: const Icon(Icons.chevron_left), onPressed: _localCurrentPage > 1 ? () => _changePage(_localCurrentPage - 1) : null),
                     Expanded(
                         child: NotificationListener<ScrollUpdateNotification>(
-                      onNotification: (notif) { widget.app.trackScrollTick(notif.scrollDelta ?? 0); return false; },
+                      onNotification: (notif) { 
+                        widget.app.trackScrollTick(notif.scrollDelta ?? 0); 
+                        return false; 
+                      },
                       child: ListView.builder(
                           controller: _reviewPageScrollController, scrollDirection: Axis.horizontal, itemCount: totalPages,
                           itemBuilder: (context, index) {
-                            int page = index + 1; bool isActive = page == _localCurrentPage;
+                            int page = index + 1; 
+                            bool isActive = page == _localCurrentPage;
                             return GestureDetector(
                               onTap: () => _changePage(page),
                               child: Container(
@@ -1115,18 +1308,27 @@ class ScienceReviewQuestionCard extends StatelessWidget {
     Color textCol = Theme.of(context).colorScheme.onSurface;
     Color borderColor = Theme.of(context).colorScheme.outline;
     
-    Color badgeColor = Colors.transparent; Color badgeTextColor = Colors.white; String badgeText = ""; IconData? badgeIcon;
+    Color badgeColor = Colors.transparent; 
+    Color badgeTextColor = Colors.white; 
+    String badgeText = ""; 
+    IconData? badgeIcon;
 
     if (isCorrectAnswer) {
       bg = const Color(0xFF10B981); 
       textCol = Colors.white;
       borderColor = bg;
-      badgeColor = Colors.white.withValues(alpha: 0.2); badgeTextColor = Colors.white; badgeText = "CORRECT ANSWER"; badgeIcon = Icons.check;
+      badgeColor = Colors.white.withValues(alpha: 0.2); 
+      badgeTextColor = Colors.white; 
+      badgeText = "CORRECT ANSWER"; 
+      badgeIcon = Icons.check;
     } else if (isUserWrongAnswer) {
       bg = const Color(0xFFEF4444); 
       textCol = Colors.white;
       borderColor = bg;
-      badgeColor = Colors.white.withValues(alpha: 0.2); badgeTextColor = Colors.white; badgeText = "YOU CHOSE"; badgeIcon = Icons.close;
+      badgeColor = Colors.white.withValues(alpha: 0.2); 
+      badgeTextColor = Colors.white; 
+      badgeText = "YOU CHOSE"; 
+      badgeIcon = Icons.close;
     }
 
     return Container(
