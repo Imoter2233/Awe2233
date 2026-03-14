@@ -161,7 +161,7 @@ class AppState extends ChangeNotifier {
   bool hasSeenWelcome = false;
   String errorMessage = "";
 
-  List<QuestionModel> fullDB = [];
+  List<QuestionModel> fullDB =[];
   List<QuestionModel> filteredDB =[];
   String searchText = "";
   
@@ -225,24 +225,16 @@ class AppState extends ChangeNotifier {
     _globalTimeOffsetMs = prefs.getInt(globalOffsetKey) ?? 0;
 
     if (isLoggedIn && userToken.isNotEmpty) {
-      DateTime rawNow = DateTime.now();
-      int secureNowMs = rawNow.millisecondsSinceEpoch + _globalTimeOffsetMs;
-      
-      // =====================================================================
-      // 🚨 THE "ACTIVE SESSION" TIME-BOMB (10-MINUTE TEST MODE) 🚨
-      // Set the limit to 10 minutes for testing. 
-      // CHANGE TO 7 DAYS LATER (e.g., 7 * 24 * 60 * 60 * 1000)
-      // =====================================================================
-      const int sessionLimitMs = 10 * 60 * 1000;
+      // 1. Instantly check if 10 mins passed on boot
+      _checkSession(); 
 
-      if (secureNowMs - _lastSyncTimeMs > sessionLimitMs) {
-        // Time exceeded while app was closed. Trigger Overlay Lock.
-        isSyncRequired = true;
+      if (isSyncRequired) {
+        // Locked out by timer immediately upon opening
         isLoading = false;
         notifyListeners();
         _startActiveSessionTimer();
       } else {
-        // ZERO FIREBASE WASTING: Boot instantly from local JSON cache
+        // Safe to load cache
         await _loadLocalFileCache();
         isLoading = false;
         notifyListeners();
@@ -252,6 +244,25 @@ class AppState extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  // --- SECURITY: ROBUST DATE PARSER ---
+  DateTime? _parseExpiryDate(dynamic rawExpiry) {
+    if (rawExpiry == null) {
+      return null;
+    }
+    try {
+      if (rawExpiry is Timestamp) {
+        return rawExpiry.toDate();
+      } else if (rawExpiry is String) {
+        return DateTime.tryParse(rawExpiry);
+      } else if (rawExpiry is int) {
+        return DateTime.fromMillisecondsSinceEpoch(rawExpiry);
+      }
+    } catch (e) {
+      debugPrint("Expiry Parse Error: $e");
+    }
+    return null;
   }
 
   // --- SECURITY: GLOBAL TIME OFFSET ---
@@ -265,7 +276,7 @@ class AppState extends ChangeNotifier {
         return DateTime.parse(data['utc_datetime']);
       }
     } catch (_) {
-      // Ignore API failure and fallback
+      // Ignore API failure and fallback to local
     }
     return null;
   }
@@ -292,61 +303,69 @@ class AppState extends ChangeNotifier {
         return false;
       }
 
-      // Check Token Expiry
-      if (data.containsKey('expiryDate') && data['expiryDate'] != null) {
-        Timestamp expiry = data['expiryDate'];
-        if (DateTime.now().isAfter(expiry.toDate())) {
-          await _executeRemoteWipe("Token Expired: Please purchase a new token.");
-          return false;
+      // Indestructible Token Expiry Check
+      if (data.containsKey('expiryDate')) {
+        DateTime? expiryDate = _parseExpiryDate(data['expiryDate']);
+        if (expiryDate != null) {
+          // Use monotonic time just in case they tampered with the clock while online
+          DateTime secureNow = DateTime.now().add(Duration(milliseconds: _globalTimeOffsetMs));
+          if (secureNow.isAfter(expiryDate)) {
+            await _executeRemoteWipe("Token Expired: Please purchase a new token.");
+            return false;
+          }
         }
       }
 
       return true;
     } catch (e) {
+      // If they are strictly offline, it hits this catch block and leaves them trapped on the Sync Screen.
       errorMessage = "Network error. Please connect to the internet to verify your session.";
       notifyListeners();
-      return false; // False, but we do not wipe. They remain trapped in the Sync overlay until internet is restored.
+      return false; 
     }
   }
 
-  // --- THE TIME-BOMB BACKGROUND TRACKER ---
+  // --- THE TIME-BOMB SESSION CHECKER ---
+  void _checkSession() {
+    if (!isLoggedIn || userToken.isEmpty) {
+      return;
+    }
+
+    DateTime rawNow = DateTime.now();
+
+    // TIME TRAVEL TRAP: Trigger total wipe if clock moved backwards
+    if (rawNow.isBefore(_lastCheckedLocalTime.subtract(const Duration(seconds: 5)))) {
+      _executeRemoteWipe("Security Alert: System time tampering detected.");
+      _activeSessionTimer?.cancel();
+      return;
+    }
+    _lastCheckedLocalTime = rawNow;
+
+    // Calculate Monotonic Secure Time
+    int secureNowMs = rawNow.millisecondsSinceEpoch + _globalTimeOffsetMs;
+
+    // =====================================================================
+    // 🚨 ACTIVE WIPE TRIGGER (10-MINUTE TEST MODE) 🚨
+    // CHANGE TO 7 DAYS LATER (e.g., 7 * 24 * 60 * 60 * 1000)
+    // =====================================================================
+    const int sessionLimitMs = 10 * 60 * 1000; 
+
+    if (secureNowMs - _lastSyncTimeMs > sessionLimitMs) {
+      if (!isSyncRequired) {
+        isSyncRequired = true;
+        // ACTIVE WIPE: Clear database instantly from RAM
+        fullDB.clear();
+        filteredDB.clear();
+        notifyListeners();
+      }
+    }
+  }
+
   void _startActiveSessionTimer() {
     _activeSessionTimer?.cancel();
     _lastCheckedLocalTime = DateTime.now();
-
     _activeSessionTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (!isLoggedIn || userToken.isEmpty) {
-        return;
-      }
-
-      DateTime rawNow = DateTime.now();
-
-      // TIME TRAVEL TRAP: Trigger total wipe if clock moved backwards
-      if (rawNow.isBefore(_lastCheckedLocalTime.subtract(const Duration(seconds: 5)))) {
-        _executeRemoteWipe("Security Alert: System time tampering detected.");
-        timer.cancel();
-        return;
-      }
-      _lastCheckedLocalTime = rawNow;
-
-      // Calculate Monotonic Secure Time
-      int secureNowMs = rawNow.millisecondsSinceEpoch + _globalTimeOffsetMs;
-
-      // =====================================================================
-      // 🚨 ACTIVE WIPE TRIGGER (10-MINUTE TEST MODE) 🚨
-      // CHANGE TO 7 DAYS LATER (e.g., 7 * 24 * 60 * 60 * 1000)
-      // =====================================================================
-      const int sessionLimitMs = 10 * 60 * 1000; 
-
-      if (secureNowMs - _lastSyncTimeMs > sessionLimitMs) {
-        if (!isSyncRequired) {
-          isSyncRequired = true;
-          // ACTIVE WIPE: Clear database instantly from RAM
-          fullDB.clear();
-          filteredDB.clear();
-          notifyListeners();
-        }
-      }
+      _checkSession();
     });
   }
 
@@ -358,6 +377,8 @@ class AppState extends ChangeNotifier {
 
     bool isSecure = await _verifyTokenLive();
     if (!isSecure) {
+      // If it failed due to expiry, they are already wiped. 
+      // If it failed due to network, they stay trapped on the overlay.
       isLoading = false;
       notifyListeners();
       return; 
@@ -389,8 +410,8 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _executeRemoteWipe(String reason) async {
-    errorMessage = reason;
-    isSyncRequired = false;
+    errorMessage = reason; // E.g., "Token Expired..."
+    isSyncRequired = false; 
     await _wipeLocalData(); 
   }
 
@@ -413,14 +434,27 @@ class AppState extends ChangeNotifier {
       debugPrint("Wipe error: $e");
     }
 
+    // Only wipe sensitive auth data to preserve their UI Theme Preferences
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.clear(); 
-    await FirebaseAuth.instance.signOut();
+    await prefs.remove(isLoggedInKey);
+    await prefs.remove(userTokenKey);
+    await prefs.remove(uniqueIdKey);
+    await prefs.remove(firstNameKey);
+    await prefs.remove(surnameKey);
+    await prefs.remove(emailKey);
+    await prefs.remove(courseKey);
+    await prefs.remove(levelKey);
+    await prefs.remove(lastSyncKey);
+    await prefs.remove(globalOffsetKey);
+    
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
     
     isLoggedIn = false;
     userToken = "";
     _activeSessionTimer?.cancel();
-    notifyListeners();
+    notifyListeners(); // This directly forces main.dart to show TokenScreen with the errorMessage
   }
 
   Future<String> _getDeviceId() async {
@@ -470,12 +504,16 @@ class AppState extends ChangeNotifier {
         return;
       }
 
-      if (data.containsKey('expiryDate') && data['expiryDate'] != null) {
-        Timestamp expiry = data['expiryDate'];
-        if (DateTime.now().isAfter(expiry.toDate())) {
-          errorMessage = "Token Expired: Please purchase a new token.";
-          notifyListeners();
-          return;
+      // Indestructible Token Expiry Check for Registration
+      if (data.containsKey('expiryDate')) {
+        DateTime? expiryDate = _parseExpiryDate(data['expiryDate']);
+        if (expiryDate != null) {
+          DateTime secureNow = DateTime.now().add(Duration(milliseconds: _globalTimeOffsetMs));
+          if (secureNow.isAfter(expiryDate)) {
+            errorMessage = "Token Expired: Please purchase a new token.";
+            notifyListeners();
+            return;
+          }
         }
       }
 
@@ -779,7 +817,7 @@ class AppState extends ChangeNotifier {
   }
 
   void toggleYearForTopic(String topic, String year) {
-    activeTopicYears.putIfAbsent(topic, () =>[]);
+    activeTopicYears.putIfAbsent(topic, () => []);
     if (activeTopicYears[topic]!.contains(year)) {
       activeTopicYears[topic]!.remove(year);
     } else {

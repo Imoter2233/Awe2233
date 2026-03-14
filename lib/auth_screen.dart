@@ -14,27 +14,49 @@ class TokenScreen extends StatefulWidget {
 class _TokenScreenState extends State<TokenScreen> {
   final TextEditingController _tokenController = TextEditingController();
   bool _isLoading = false;
-  String? _errorMsg;
+  String? _localErrorMsg;
 
   void _verifyToken() async {
     String token = _tokenController.text.trim().toUpperCase();
     if (token.length != 17 || !RegExp(r'^[A-Z0-9]+$').hasMatch(token)) {
-      setState(() => _errorMsg = "Invalid format. Must be 17 characters.");
+      setState(() {
+        _localErrorMsg = "Invalid format. Must be 17 characters.";
+      });
       return;
     }
 
-    setState(() { _isLoading = true; _errorMsg = null; });
+    setState(() { 
+      _isLoading = true; 
+      _localErrorMsg = null; 
+    });
+    
     await widget.app.registerToken(token);
-    if (!mounted) return;
+    
+    if (!mounted) {
+      return;
+    }
+    
     if (widget.app.errorMessage.isNotEmpty) {
-      setState(() { _isLoading = false; _errorMsg = widget.app.errorMessage; });
+      setState(() { 
+        _isLoading = false; 
+        _localErrorMsg = widget.app.errorMessage; 
+      });
     } else {
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Dynamically pull the error message from the AppState if we were kicked out,
+    // otherwise use the local validation error.
+    String? displayError = _localErrorMsg;
+    if (displayError == null && widget.app.errorMessage.isNotEmpty) {
+      displayError = widget.app.errorMessage;
+    }
+
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -49,6 +71,31 @@ class _TokenScreenState extends State<TokenScreen> {
                 const SizedBox(height: 10),
                 Text("Enter your 17-digit security token to bind this device.", textAlign: TextAlign.center, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
                 const SizedBox(height: 40),
+                
+                if (displayError != null && displayError.isNotEmpty) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5))
+                    ),
+                    child: Row(
+                      children:[
+                        const Icon(Icons.error_outline, color: Colors.redAccent),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            displayError,
+                            style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 TextField(
                   controller: _tokenController,
                   maxLength: 17, textCapitalization: TextCapitalization.characters,
@@ -62,7 +109,6 @@ class _TokenScreenState extends State<TokenScreen> {
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
                     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
                     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2)),
-                    errorText: _errorMsg,
                   ),
                 ),
                 const SizedBox(height: 30),
@@ -123,7 +169,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
       await widget.app.saveUserProfile(
@@ -134,14 +182,21 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           selectedLevel,
       );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
+      
       if (widget.app.errorMessage.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.app.errorMessage)));
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+        });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+        });
         String errorMsg = widget.app.errorMessage.isNotEmpty ? widget.app.errorMessage : "Registration failed. Check network.";
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg)));
       }
@@ -188,7 +243,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         flex: 3,
                         child: ListWheelScrollView.useDelegate(
                           itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
-                          onSelectedItemChanged: (v) { widget.app.playScrollSound(); setState(() => _selectedCourseIdx = v); },
+                          onSelectedItemChanged: (v) { 
+                            widget.app.playScrollSound(); 
+                            setState(() {
+                              _selectedCourseIdx = v;
+                            }); 
+                          },
                           childDelegate: ListWheelChildBuilderDelegate(
                             childCount: courses.length,
                             builder: (ctx, i) => Center(child: Text(courses[i], style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _selectedCourseIdx == i ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)))),
@@ -202,7 +262,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         flex: 2,
                         child: ListWheelScrollView.useDelegate(
                           itemExtent: 40, physics: const FixedExtentScrollPhysics(), perspective: 0.005,
-                          onSelectedItemChanged: (v) { widget.app.playScrollSound(); setState(() => _selectedLevelIdx = v); },
+                          onSelectedItemChanged: (v) { 
+                            widget.app.playScrollSound(); 
+                            setState(() {
+                              _selectedLevelIdx = v;
+                            }); 
+                          },
                           childDelegate: ListWheelChildBuilderDelegate(
                             childCount: levels.length,
                             builder: (ctx, i) => Center(child: Text(levels[i], style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _selectedLevelIdx == i ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)))),
@@ -282,29 +347,58 @@ class BouncingDots extends StatefulWidget {
 
 class _BouncingDotsState extends State<BouncingDots> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
+  
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat();
   }
+  
   @override
-  void dispose() { _controller.dispose(); super.dispose(); }
+  void dispose() { 
+    _controller.dispose(); 
+    super.dispose(); 
+  }
 
   Widget _buildDot(double delay) {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
-        double offset = 0; double phase = (_controller.value - delay) % 1.0;
-        if (phase < 0) phase += 1.0;
-        if (phase < 0.5) offset = -math.sin(phase * 2 * math.pi) * 15;
-        return Transform.translate(offset: Offset(0, offset), child: Container(width: 18, height: 18, decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle)));
+        double offset = 0; 
+        double phase = (_controller.value - delay) % 1.0;
+        
+        if (phase < 0) {
+          phase += 1.0;
+        }
+        
+        if (phase < 0.5) {
+          offset = -math.sin(phase * 2 * math.pi) * 15;
+        }
+        
+        return Transform.translate(
+          offset: Offset(0, offset), 
+          child: Container(
+            width: 18, 
+            height: 18, 
+            decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle)
+          )
+        );
       },
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Row(mainAxisAlignment: MainAxisAlignment.center, children:[_buildDot(0.0), const SizedBox(width: 15), _buildDot(0.15), const SizedBox(width: 15), _buildDot(0.30)]);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center, 
+      children:[
+        _buildDot(0.0), 
+        const SizedBox(width: 15), 
+        _buildDot(0.15), 
+        const SizedBox(width: 15), 
+        _buildDot(0.30)
+      ]
+    );
   }
 }
 
