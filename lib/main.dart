@@ -149,7 +149,7 @@ class SplashLoaderScreen extends StatelessWidget {
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+          children:[
             const Icon(Icons.psychology, size: 80, color: Colors.orange),
             const SizedBox(height: 20),
             RichText(
@@ -161,7 +161,7 @@ class SplashLoaderScreen extends StatelessWidget {
                   color: Colors.white,
                   letterSpacing: 2.0,
                 ),
-                children: [
+                children:[
                   TextSpan(text: ".", style: TextStyle(color: Colors.orange)),
                 ],
               ),

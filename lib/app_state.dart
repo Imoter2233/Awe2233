@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:csv/csv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -18,10 +19,11 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'models.dart';
 
 // --- CONSTANTS & KEYS ---
+// 🚨 CHANGE THESE TO YOUR CLOUDFLARE SIGNED URLS OR FIREBASE STORAGE URLS 🚨
 const String medicalCsvUrl =
-    "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
+    "https://your-secure-cloudflare-link.com/medical_data.csv";
 const String scienceCsvUrl =
-    "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/science_data.csv";
+    "https://your-secure-cloudflare-link.com/science_data.csv";
 
 const String themeKey = "synapse_theme_mode";
 const String colorIndexKey = "synapse_color_index";
@@ -32,8 +34,14 @@ const String cacheFileName = "synapse_offline_db.json";
 const String lastSyncKey = "synapse_last_sync_time";
 const String globalOffsetKey = "synapse_global_offset";
 
+// SECURE STORAGE KEYS (Cannot be extracted by Rooted devices)
+const String tokenExpiryKey = "synapse_secure_token_expiry";
+const String customUuidKey = "synapse_secure_custom_uuid";
+const String genesisGlobalKey = "synapse_secure_genesis_global";
+const String genesisLocalKey = "synapse_secure_genesis_local";
+const String userTokenKey = "synapse_secure_user_token";
+
 const String isLoggedInKey = "synapse_is_logged_in";
-const String userTokenKey = "synapse_user_token";
 const String uniqueIdKey = "synapse_unique_id";
 const String firstNameKey = "synapse_first_name";
 const String surnameKey = "synapse_surname";
@@ -41,6 +49,9 @@ const String emailKey = "synapse_email";
 const String courseKey = "synapse_course";
 const String levelKey = "synapse_level";
 const String welcomeSeenKey = "synapse_welcome_seen";
+
+// Initialize Secure Storage
+const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
 
 // --- BACKGROUND ISOLATE PARSERS ---
 List<QuestionModel> _decodeCsvInBackground(String csvText) {
@@ -79,7 +90,7 @@ List<QuestionModel> _decodeCsvInBackground(String csvText) {
             topic: dict['topic'] ?? "Uncategorized",
             year: dict['year'] ?? "",
             stem: dict['stem'] ?? dict['q'] ?? "",
-            roots: [],
+            roots:[],
             optionA: dict['a'] ?? "",
             optionB: dict['b'] ?? "",
             optionC: dict['c'] ?? "",
@@ -145,6 +156,11 @@ class AppState extends ChangeNotifier {
   DateTime _lastCheckedLocalTime = DateTime.now();
   int _lastSyncTimeMs = 0;
   int _globalTimeOffsetMs = 0;
+  int _localTokenExpiryMs = 0;
+
+  // GENESIS VARIABLES
+  int _genesisGlobalMs = 0;
+  int _genesisLocalMs = 0;
 
   bool soundEnabled = true;
   double soundVolume = 0.5;
@@ -165,7 +181,7 @@ class AppState extends ChangeNotifier {
   List<QuestionModel> filteredDB =[];
   String searchText = "";
   
-  List<String> activeTopics = [];
+  List<String> activeTopics =[];
   List<String> allTopics =[];
   Map<String, List<String>> activeTopicYears = {};
   Map<String, Set<String>> courseTopics = {}; 
@@ -190,6 +206,9 @@ class AppState extends ChangeNotifier {
   int timeLeftSeconds = 0;
   int finalScore = 0;
   Map<String, Map<String, int>> topicPerformance = {};
+  
+  // UI CALLBACK FOR AUTO SUBMIT
+  VoidCallback? onAutoSubmitTrigger;
 
   final List<Color> availableColors =[
     const Color(0xFFF59E0B),
@@ -212,7 +231,6 @@ class AppState extends ChangeNotifier {
     isFirstRun = prefs.getBool(firstRunKey) ?? true;
 
     isLoggedIn = prefs.getBool(isLoggedInKey) ?? false;
-    userToken = prefs.getString(userTokenKey) ?? "";
     uniqueId = prefs.getString(uniqueIdKey) ?? "";
     firstName = prefs.getString(firstNameKey) ?? "";
     surname = prefs.getString(surnameKey) ?? "";
@@ -224,17 +242,29 @@ class AppState extends ChangeNotifier {
     _lastSyncTimeMs = prefs.getInt(lastSyncKey) ?? 0;
     _globalTimeOffsetMs = prefs.getInt(globalOffsetKey) ?? 0;
 
+    // READ SECURE STORAGE KEYS
+    userToken = await _secureStorage.read(key: userTokenKey) ?? "";
+    
+    String expStr = await _secureStorage.read(key: tokenExpiryKey) ?? "0";
+    _localTokenExpiryMs = int.tryParse(expStr) ?? 0;
+    
+    String genGlobalStr = await _secureStorage.read(key: genesisGlobalKey) ?? "0";
+    _genesisGlobalMs = int.tryParse(genGlobalStr) ?? 0;
+    
+    String genLocalStr = await _secureStorage.read(key: genesisLocalKey) ?? "0";
+    _genesisLocalMs = int.tryParse(genLocalStr) ?? 0;
+
     if (isLoggedIn && userToken.isNotEmpty) {
-      // 1. Instantly check if 10 mins passed on boot
       _checkSession(); 
 
-      if (isSyncRequired) {
-        // Locked out by timer immediately upon opening
+      if (!isLoggedIn) {
+        isLoading = false;
+        notifyListeners();
+      } else if (isSyncRequired) {
         isLoading = false;
         notifyListeners();
         _startActiveSessionTimer();
       } else {
-        // Safe to load cache
         await _loadLocalFileCache();
         isLoading = false;
         notifyListeners();
@@ -265,26 +295,67 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  // --- SECURITY: GLOBAL TIME OFFSET ---
+  // --- SECURITY: UNBLOCKABLE GLOBAL TIME FETCH ---
   Future<DateTime?> _getGlobalTime() async {
     try {
-      final response = await http
-          .get(Uri.parse('http://worldtimeapi.org/api/timezone/Etc/UTC'))
-          .timeout(const Duration(seconds: 4));
+      // 1. Primary: Unblockable Google Header Time
+      final response = await http.head(Uri.parse('https://google.com')).timeout(const Duration(seconds: 4));
+      if (response.statusCode == 200) {
+        String? dateHeader = response.headers['date'];
+        if (dateHeader != null) {
+          return HttpDate.parse(dateHeader);
+        }
+      }
+    } catch (_) {}
+
+    try {
+      // 2. Fallback: WorldTimeAPI
+      final response = await http.get(Uri.parse('http://worldtimeapi.org/api/timezone/Etc/UTC')).timeout(const Duration(seconds: 4));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return DateTime.parse(data['utc_datetime']);
       }
-    } catch (_) {
-      // Ignore API failure and fallback to local
-    }
+    } catch (_) {}
+
     return null;
+  }
+
+  // --- SECURITY: COMPOSITE FINGERPRINT GENERATOR ---
+  Future<String> _getDeviceId() async {
+    if (kIsWeb) {
+      return "web_device_id";
+    }
+    try {
+      String customUuid = await _secureStorage.read(key: customUuidKey) ?? "";
+      
+      if (customUuid.isEmpty) {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        math.Random rnd = math.Random();
+        String randomStr = String.fromCharCodes(Iterable.generate(16, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
+        customUuid = "SYN-$randomStr";
+        await _secureStorage.write(key: customUuidKey, value: customUuid);
+      }
+
+      DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+      String hardwareId = "unknown";
+      if (Platform.isAndroid) {
+        AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+        hardwareId = androidInfo.id;
+      } else if (Platform.isIOS) {
+        IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
+        hardwareId = iosInfo.identifierForVendor ?? "unknown_ios";
+      }
+      
+      return "${hardwareId}_||_$customUuid";
+    } catch (e) {
+      debugPrint("Device lookup error: $e");
+    }
+    return "unknown_device_fallback";
   }
 
   // --- SECURITY: RUTHLESS FIREBASE TOKEN VALIDATION ---
   Future<bool> _verifyTokenLive() async {
     try {
-      // FORCE LIVE SERVER CHECK (No Ghost Caching Bypass)
       DocumentSnapshot tokenDoc = await FirebaseFirestore.instance
           .collection('tokens')
           .doc(userToken)
@@ -303,11 +374,19 @@ class AppState extends ChangeNotifier {
         return false;
       }
 
-      // Indestructible Token Expiry Check
+      String deviceId = await _getDeviceId();
+      String boundDevice = data['boundDeviceId'] ?? "";
+      if (boundDevice.isNotEmpty && boundDevice != deviceId) {
+        await _executeRemoteWipe("Security Alert: Token cloned or bound to another device. Clear Data detected.");
+        return false;
+      }
+
       if (data.containsKey('expiryDate')) {
         DateTime? expiryDate = _parseExpiryDate(data['expiryDate']);
         if (expiryDate != null) {
-          // Use monotonic time just in case they tampered with the clock while online
+          _localTokenExpiryMs = expiryDate.millisecondsSinceEpoch;
+          await _secureStorage.write(key: tokenExpiryKey, value: _localTokenExpiryMs.toString());
+
           DateTime secureNow = DateTime.now().add(Duration(milliseconds: _globalTimeOffsetMs));
           if (secureNow.isAfter(expiryDate)) {
             await _executeRemoteWipe("Token Expired: Please purchase a new token.");
@@ -315,45 +394,46 @@ class AppState extends ChangeNotifier {
           }
         }
       }
-
       return true;
     } catch (e) {
-      // If they are strictly offline, it hits this catch block and leaves them trapped on the Sync Screen.
       errorMessage = "Network error. Please connect to the internet to verify your session.";
       notifyListeners();
       return false; 
     }
   }
 
-  // --- THE TIME-BOMB SESSION CHECKER ---
+  // --- THE TIME-BOMB SESSION CHECKER (GENESIS IMPLEMENTATION) ---
   void _checkSession() {
     if (!isLoggedIn || userToken.isEmpty) {
       return;
     }
 
-    DateTime rawNow = DateTime.now();
+    DateTime localNow = DateTime.now();
 
-    // TIME TRAVEL TRAP: Trigger total wipe if clock moved backwards
-    if (rawNow.isBefore(_lastCheckedLocalTime.subtract(const Duration(seconds: 5)))) {
+    // 1. THE TIME-TRAVEL TRAP (Backward Jump)
+    if (localNow.isBefore(_lastCheckedLocalTime.subtract(const Duration(seconds: 5)))) {
       _executeRemoteWipe("Security Alert: System time tampering detected.");
       _activeSessionTimer?.cancel();
       return;
     }
-    _lastCheckedLocalTime = rawNow;
+    _lastCheckedLocalTime = localNow;
 
-    // Calculate Monotonic Secure Time
-    int secureNowMs = rawNow.millisecondsSinceEpoch + _globalTimeOffsetMs;
+    // 2. THE GENESIS ANCHOR TRAP (Absolute Truth)
+    int localElapsedMs = localNow.millisecondsSinceEpoch - _genesisLocalMs;
+    int currentGenesisGlobalMs = _genesisGlobalMs + localElapsedMs;
+    
+    if (_localTokenExpiryMs > 0 && currentGenesisGlobalMs > _localTokenExpiryMs) {
+      _executeRemoteWipe("Token Expired: Session time depleted.");
+      _activeSessionTimer?.cancel();
+      return;
+    }
 
-    // =====================================================================
-    // 🚨 ACTIVE WIPE TRIGGER (10-MINUTE TEST MODE) 🚨
-    // CHANGE TO 7 DAYS LATER (e.g., 7 * 24 * 60 * 60 * 1000)
-    // =====================================================================
-    const int sessionLimitMs = 10 * 60 * 1000; 
+    // 3. THE OFFLINE SESSION LIMIT (2 MINUTE TESTING)
+    const int sessionLimitMs = 2 * 60 * 1000; 
 
-    if (secureNowMs - _lastSyncTimeMs > sessionLimitMs) {
+    if (currentGenesisGlobalMs - _lastSyncTimeMs > sessionLimitMs) {
       if (!isSyncRequired) {
         isSyncRequired = true;
-        // ACTIVE WIPE: Clear database instantly from RAM
         fullDB.clear();
         filteredDB.clear();
         notifyListeners();
@@ -364,7 +444,7 @@ class AppState extends ChangeNotifier {
   void _startActiveSessionTimer() {
     _activeSessionTimer?.cancel();
     _lastCheckedLocalTime = DateTime.now();
-    _activeSessionTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+    _activeSessionTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       _checkSession();
     });
   }
@@ -377,17 +457,13 @@ class AppState extends ChangeNotifier {
 
     bool isSecure = await _verifyTokenLive();
     if (!isSecure) {
-      // If it failed due to expiry, they are already wiped. 
-      // If it failed due to network, they stay trapped on the overlay.
       isLoading = false;
       notifyListeners();
       return; 
     }
 
-    // Token is valid. Pull latest CSV data.
     await _fetchFromServer();
 
-    // Re-calibrate Secure Monotonic Time
     DateTime? globalTime = await _getGlobalTime();
     DateTime rawNow = DateTime.now();
     int syncTimeMs = globalTime?.millisecondsSinceEpoch ?? rawNow.millisecondsSinceEpoch;
@@ -404,14 +480,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Manual update requested from side drawer
   Future<void> checkForUpdates() async {
     await forceSyncNow();
   }
 
   Future<void> _executeRemoteWipe(String reason) async {
-    errorMessage = reason; // E.g., "Token Expired..."
-    isSyncRequired = false; 
+    errorMessage = reason; 
+    isSyncRequired = false;
     await _wipeLocalData(); 
   }
 
@@ -434,10 +509,8 @@ class AppState extends ChangeNotifier {
       debugPrint("Wipe error: $e");
     }
 
-    // Only wipe sensitive auth data to preserve their UI Theme Preferences
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.remove(isLoggedInKey);
-    await prefs.remove(userTokenKey);
     await prefs.remove(uniqueIdKey);
     await prefs.remove(firstNameKey);
     await prefs.remove(surnameKey);
@@ -447,6 +520,12 @@ class AppState extends ChangeNotifier {
     await prefs.remove(lastSyncKey);
     await prefs.remove(globalOffsetKey);
     
+    // WIPE SECURE STORAGE (Except UUID, keep it to punish cloning)
+    await _secureStorage.delete(key: userTokenKey);
+    await _secureStorage.delete(key: tokenExpiryKey);
+    await _secureStorage.delete(key: genesisGlobalKey);
+    await _secureStorage.delete(key: genesisLocalKey);
+    
     try {
       await FirebaseAuth.instance.signOut();
     } catch (_) {}
@@ -454,28 +533,10 @@ class AppState extends ChangeNotifier {
     isLoggedIn = false;
     userToken = "";
     _activeSessionTimer?.cancel();
-    notifyListeners(); // This directly forces main.dart to show TokenScreen with the errorMessage
+    notifyListeners(); 
   }
 
-  Future<String> _getDeviceId() async {
-    if (kIsWeb) {
-      return "web_device_id";
-    }
-    try {
-      DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-      if (Platform.isAndroid) {
-        AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
-        return androidInfo.id;
-      } else if (Platform.isIOS) {
-        IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
-        return iosInfo.identifierForVendor ?? "unknown_ios_device";
-      }
-    } catch (e) {
-      debugPrint("Device lookup error: $e");
-    }
-    return "unknown_device";
-  }
-
+  // --- SECURITY: ATOMIC TRANSACTION FOR REGISTRATION ---
   Future<void> registerToken(String token) async {
     try {
       errorMessage = "";
@@ -483,57 +544,64 @@ class AppState extends ChangeNotifier {
       DateTime ping = await _getGlobalTime() ?? rawNow;
       
       _globalTimeOffsetMs = ping.millisecondsSinceEpoch - rawNow.millisecondsSinceEpoch;
-      _lastSyncTimeMs = ping.millisecondsSinceEpoch;
+      int secureGlobalMs = ping.millisecondsSinceEpoch;
+      String deviceId = await _getDeviceId();
 
-      DocumentSnapshot tokenDoc = await FirebaseFirestore.instance
-          .collection('tokens')
-          .doc(token)
-          .get(const GetOptions(source: Source.server));
+      DocumentReference tokenRef = FirebaseFirestore.instance.collection('tokens').doc(token);
 
-      if (!tokenDoc.exists) {
-        errorMessage = "Invalid Token.";
-        notifyListeners();
-        return;
-      }
+      String transactionError = "";
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        DocumentSnapshot tokenDoc = await transaction.get(tokenRef);
 
-      Map<String, dynamic> data = tokenDoc.data() as Map<String, dynamic>;
-      bool isRevoked = data['isRevoked'] ?? false;
-      if (isRevoked) {
-        errorMessage = "Security Alert: Revoked Token.";
-        notifyListeners();
-        return;
-      }
+        if (!tokenDoc.exists) {
+          transactionError = "Invalid Token.";
+          return;
+        }
 
-      // Indestructible Token Expiry Check for Registration
-      if (data.containsKey('expiryDate')) {
-        DateTime? expiryDate = _parseExpiryDate(data['expiryDate']);
-        if (expiryDate != null) {
-          DateTime secureNow = DateTime.now().add(Duration(milliseconds: _globalTimeOffsetMs));
-          if (secureNow.isAfter(expiryDate)) {
-            errorMessage = "Token Expired: Please purchase a new token.";
-            notifyListeners();
+        Map<String, dynamic> data = tokenDoc.data() as Map<String, dynamic>;
+        bool isRevoked = data['isRevoked'] ?? false;
+        if (isRevoked) {
+          transactionError = "Security Alert: Revoked Token.";
+          return;
+        }
+
+        if (data.containsKey('expiryDate')) {
+          DateTime? expiryDate = _parseExpiryDate(data['expiryDate']);
+          if (expiryDate != null && secureGlobalMs > expiryDate.millisecondsSinceEpoch) {
+            transactionError = "Token Expired: Please purchase a new token.";
             return;
           }
         }
+
+        bool isUsed = data['isUsed'] ?? false;
+        String boundDevice = data['boundDeviceId'] ?? "";
+
+        if (isUsed) {
+          if (boundDevice != deviceId) {
+            transactionError = "Token already bound to another device.";
+            return;
+          }
+        } else {
+          transaction.update(tokenRef, {'boundDeviceId': deviceId});
+        }
+      });
+
+      if (transactionError.isNotEmpty) {
+        errorMessage = transactionError;
+        notifyListeners();
+        return;
       }
 
-      bool isUsed = data['isUsed'] ?? false;
-      String deviceId = await _getDeviceId();
-
+      DocumentSnapshot userCheck = await tokenRef.get();
+      Map<String, dynamic> finalData = userCheck.data() as Map<String, dynamic>;
+      
       if (userToken.isNotEmpty && userToken != token) {
         await _wipeLocalData();
       }
-      errorMessage = "";
 
-      if (isUsed) {
-        String boundDevice = data['boundDeviceId'] ?? "";
-        if (boundDevice != deviceId) {
-          errorMessage = "Token already bound to another device.";
-          notifyListeners();
-          return;
-        }
-        
-        String existingUid = data['usedByUid'] ?? "";
+      bool isUsedFinal = finalData['isUsed'] ?? false;
+      if (isUsedFinal) {
+        String existingUid = finalData['usedByUid'] ?? "";
         if (existingUid.isNotEmpty) {
           DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(existingUid).get();
           if (userDoc.exists) {
@@ -554,9 +622,30 @@ class AppState extends ChangeNotifier {
             await prefs.setString(courseKey, userCourse);
             await prefs.setString(levelKey, userLevel);
             await prefs.setBool(isLoggedInKey, true);
-            await prefs.setString(userTokenKey, token);
+            
+            // SECURE STORAGE WRITES
+            await _secureStorage.write(key: userTokenKey, value: token);
+            
+            String genGlobalStr = await _secureStorage.read(key: genesisGlobalKey) ?? "";
+            _genesisGlobalMs = genGlobalStr.isNotEmpty ? int.parse(genGlobalStr) : secureGlobalMs;
+            
+            String genLocalStr = await _secureStorage.read(key: genesisLocalKey) ?? "";
+            _genesisLocalMs = genLocalStr.isNotEmpty ? int.parse(genLocalStr) : rawNow.millisecondsSinceEpoch;
+            
+            await _secureStorage.write(key: genesisGlobalKey, value: _genesisGlobalMs.toString());
+            await _secureStorage.write(key: genesisLocalKey, value: _genesisLocalMs.toString());
+            
+            _lastSyncTimeMs = secureGlobalMs;
             await prefs.setInt(lastSyncKey, _lastSyncTimeMs);
             await prefs.setInt(globalOffsetKey, _globalTimeOffsetMs);
+
+            if (finalData.containsKey('expiryDate')) {
+              DateTime? eDate = _parseExpiryDate(finalData['expiryDate']);
+              if (eDate != null) {
+                _localTokenExpiryMs = eDate.millisecondsSinceEpoch;
+                await _secureStorage.write(key: tokenExpiryKey, value: _localTokenExpiryMs.toString());
+              }
+            }
 
             userToken = token;
             isSyncRequired = false;
@@ -568,15 +657,21 @@ class AppState extends ChangeNotifier {
             return;
           }
         }
-      } else {
-        await FirebaseFirestore.instance.collection('tokens').doc(token).update({'boundDeviceId': deviceId});
       }
 
-      SharedPreferences prefs = await SharedPreferences.getInstance();
       userToken = token;
-      await prefs.setString(userTokenKey, token);
+      await _secureStorage.write(key: userTokenKey, value: token);
+      
+      _genesisGlobalMs = secureGlobalMs;
+      _genesisLocalMs = rawNow.millisecondsSinceEpoch;
+      await _secureStorage.write(key: genesisGlobalKey, value: _genesisGlobalMs.toString());
+      await _secureStorage.write(key: genesisLocalKey, value: _genesisLocalMs.toString());
+      
+      _lastSyncTimeMs = secureGlobalMs;
+      SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.setInt(lastSyncKey, _lastSyncTimeMs);
       await prefs.setInt(globalOffsetKey, _globalTimeOffsetMs);
+
       isSyncRequired = false;
       notifyListeners();
       _startActiveSessionTimer();
@@ -586,6 +681,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // --- SECURITY: ATOMIC TRANSACTION FOR PROFILE CREATION ---
   Future<void> saveUserProfile(String fName, String sName, String mail, String selCourse, String selLevel) async {
     try {
       errorMessage = "";
@@ -608,25 +704,45 @@ class AppState extends ChangeNotifier {
 
       final String uid = userCred.user!.uid;
 
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'firstName': fName.trim(),
-        'surname': sName.trim(),
-        'email': mail.trim(),
-        'uniqueId': newUniqueId,
-        'deviceId': deviceId,
-        'boundToken': userToken,
-        'course': selCourse,
-        'level': selLevel,
-        'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      DocumentReference tokenRef = FirebaseFirestore.instance.collection('tokens').doc(userToken);
+      String transactionError = "";
+      
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        DocumentSnapshot tokenDoc = await transaction.get(tokenRef);
+        Map<String, dynamic> data = tokenDoc.data() as Map<String, dynamic>;
+        bool isUsed = data['isUsed'] ?? false;
+        
+        if (isUsed && data['usedByUid'] != uid) {
+          transactionError = "Error: Token was claimed by another account during setup.";
+          return;
+        }
 
-      await FirebaseFirestore.instance.collection('tokens').doc(userToken).set({
-        'isUsed': true,
-        'usedByUid': uid,
-        'boundDeviceId': deviceId,
-        'boundCourse': selCourse,
-        'boundLevel': selLevel,
-      }, SetOptions(merge: true));
+        transaction.set(FirebaseFirestore.instance.collection('users').doc(uid), {
+          'firstName': fName.trim(),
+          'surname': sName.trim(),
+          'email': mail.trim(),
+          'uniqueId': newUniqueId,
+          'deviceId': deviceId,
+          'boundToken': userToken,
+          'course': selCourse,
+          'level': selLevel,
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        transaction.update(tokenRef, {
+          'isUsed': true,
+          'usedByUid': uid,
+          'boundDeviceId': deviceId,
+          'boundCourse': selCourse,
+          'boundLevel': selLevel,
+        });
+      });
+
+      if (transactionError.isNotEmpty) {
+        errorMessage = transactionError;
+        notifyListeners();
+        return;
+      }
 
       firstName = fName.trim();
       surname = sName.trim();
@@ -838,12 +954,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void startExam(int minutes) {
+  void startExam(int minutes, {VoidCallback? onAutoSubmit}) {
     isExamMode = true;
     userAnswers.clear();
     timeLeftSeconds = minutes * 60;
     currentPage = 1;
+    onAutoSubmitTrigger = onAutoSubmit;
     applyFilters();
+    
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (timeLeftSeconds > 0) {
@@ -851,6 +969,9 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       } else {
         submitExam();
+        if (onAutoSubmitTrigger != null) {
+          onAutoSubmitTrigger!();
+        }
       }
     });
     notifyListeners();
@@ -891,6 +1012,7 @@ class AppState extends ChangeNotifier {
     isExamMode = false;
     userAnswers.clear();
     currentPage = 1;
+    onAutoSubmitTrigger = null;
     notifyListeners();
   }
 

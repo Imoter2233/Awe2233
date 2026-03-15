@@ -619,9 +619,18 @@ class _MedicalMainScreenState extends State<MedicalMainScreen> {
                       onPressed: () { 
                         int totalMins = selectedHour * 60 + selectedMin; 
                         if (totalMins == 0) {
-                          totalMins = 1; 
-                        }
-                        app.startExam(totalMins); 
+                          totalMins = 1;
+                        } 
+                        
+                        // INJECTED AUTO-SUBMIT CALLBACK
+                        app.startExam(totalMins, onAutoSubmit: () {
+                          if (mounted) {
+                            Navigator.push(
+                              context, 
+                              MaterialPageRoute(builder: (_) => MedicalResultScreen(app: app))
+                            );
+                          }
+                        }); 
                         Navigator.pop(ctx); 
                       }, 
                       child: Text("START", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 16))
@@ -644,7 +653,7 @@ class MedicalQuestionCard extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children:[
           Row(children:[
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(6)), child: Text(q.topic, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),

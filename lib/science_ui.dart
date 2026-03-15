@@ -272,7 +272,7 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                                 borderRadius: BorderRadius.circular(20),
                                 onTap: () {
                                   app.submitExam();
-                                  Navigator.push(context, MaterialPageRoute(builder: (_) => ScienceResultScreen(app: app)));
+                                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ScienceResultScreen(app: app)));
                                 },
                                 child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: Text("SUBMIT", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.2))),
                               ),
@@ -719,7 +719,16 @@ class _ScienceMainScreenState extends State<ScienceMainScreen> {
                         if (totalMins == 0) {
                           totalMins = 1;
                         } 
-                        app.startExam(totalMins); 
+                        
+                        // INJECTED AUTO-SUBMIT CALLBACK
+                        app.startExam(totalMins, onAutoSubmit: () {
+                          if (mounted) {
+                            Navigator.pushReplacement(
+                              context, 
+                              MaterialPageRoute(builder: (_) => ScienceResultScreen(app: app))
+                            );
+                          }
+                        }); 
                         Navigator.pop(ctx); 
                       }, 
                       child: Text("START", style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold, fontSize: 16))
@@ -913,7 +922,7 @@ class _ScienceQuestionCardState extends State<ScienceQuestionCard> {
       padding: const EdgeInsets.all(12), 
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children:[
           Row(children:[
             Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFE0E7FF), borderRadius: BorderRadius.circular(6)), child: Text(widget.q.subject, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF4338CA)))),
             const Spacer(),
