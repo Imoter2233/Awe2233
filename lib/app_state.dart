@@ -19,11 +19,11 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'models.dart';
 
 // --- CONSTANTS & KEYS ---
-// 🚨 CHANGE THESE TO YOUR CLOUDFLARE SIGNED URLS OR FIREBASE STORAGE URLS 🚨
+// Restored Original GitHub URLs for immediate functionality
 const String medicalCsvUrl =
-    "https://your-secure-cloudflare-link.com/medical_data.csv";
+    "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/data.csv";
 const String scienceCsvUrl =
-    "https://your-secure-cloudflare-link.com/science_data.csv";
+    "https://raw.githubusercontent.com/Imoter2233/Awe2233/main/science_data.csv";
 
 const String themeKey = "synapse_theme_mode";
 const String colorIndexKey = "synapse_color_index";
@@ -34,7 +34,7 @@ const String cacheFileName = "synapse_offline_db.json";
 const String lastSyncKey = "synapse_last_sync_time";
 const String globalOffsetKey = "synapse_global_offset";
 
-// SECURE STORAGE KEYS (Cannot be extracted by Rooted devices)
+// SECURE STORAGE KEYS
 const String tokenExpiryKey = "synapse_secure_token_expiry";
 const String customUuidKey = "synapse_secure_custom_uuid";
 const String genesisGlobalKey = "synapse_secure_genesis_global";
@@ -242,17 +242,44 @@ class AppState extends ChangeNotifier {
     _lastSyncTimeMs = prefs.getInt(lastSyncKey) ?? 0;
     _globalTimeOffsetMs = prefs.getInt(globalOffsetKey) ?? 0;
 
-    // READ SECURE STORAGE KEYS
+    // --- SECURE STORAGE MIGRATION BRIDGE ---
     userToken = await _secureStorage.read(key: userTokenKey) ?? "";
+    if (userToken.isEmpty && prefs.containsKey("synapse_user_token")) {
+      // Migrate old SharedPreferences token to Secure Vault
+      userToken = prefs.getString("synapse_user_token") ?? "";
+      if (userToken.isNotEmpty) {
+        await _secureStorage.write(key: userTokenKey, value: userToken);
+        await prefs.remove("synapse_user_token");
+      }
+    }
     
-    String expStr = await _secureStorage.read(key: tokenExpiryKey) ?? "0";
+    String expStr = await _secureStorage.read(key: tokenExpiryKey) ?? "";
     _localTokenExpiryMs = int.tryParse(expStr) ?? 0;
     
-    String genGlobalStr = await _secureStorage.read(key: genesisGlobalKey) ?? "0";
-    _genesisGlobalMs = int.tryParse(genGlobalStr) ?? 0;
+    String genGlobalStr = await _secureStorage.read(key: genesisGlobalKey) ?? "";
+    if (genGlobalStr.isEmpty && prefs.containsKey("synapse_genesis_global_ms")) {
+      _genesisGlobalMs = prefs.getInt("synapse_genesis_global_ms") ?? 0;
+      await _secureStorage.write(key: genesisGlobalKey, value: _genesisGlobalMs.toString());
+    } else {
+      _genesisGlobalMs = int.tryParse(genGlobalStr) ?? 0;
+    }
     
-    String genLocalStr = await _secureStorage.read(key: genesisLocalKey) ?? "0";
-    _genesisLocalMs = int.tryParse(genLocalStr) ?? 0;
+    String genLocalStr = await _secureStorage.read(key: genesisLocalKey) ?? "";
+    if (genLocalStr.isEmpty && prefs.containsKey("synapse_genesis_local_ms")) {
+      _genesisLocalMs = prefs.getInt("synapse_genesis_local_ms") ?? 0;
+      await _secureStorage.write(key: genesisLocalKey, value: _genesisLocalMs.toString());
+    } else {
+      _genesisLocalMs = int.tryParse(genLocalStr) ?? 0;
+    }
+
+    // THE DEAD-STATE CATCHER
+    if (isLoggedIn && userToken.isEmpty) {
+      isLoggedIn = false;
+      await prefs.setBool(isLoggedInKey, false);
+      isLoading = false;
+      notifyListeners();
+      return;
+    }
 
     if (isLoggedIn && userToken.isNotEmpty) {
       _checkSession(); 
@@ -266,6 +293,10 @@ class AppState extends ChangeNotifier {
         _startActiveSessionTimer();
       } else {
         await _loadLocalFileCache();
+        // If cache fails and fullDB is empty, aggressively try internet so they don't see a blank screen
+        if (fullDB.isEmpty) {
+          await _fetchFromServer();
+        }
         isLoading = false;
         notifyListeners();
         _startActiveSessionTimer();
